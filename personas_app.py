@@ -774,7 +774,6 @@ def personas_screen():
                                     "dni": _dni,
                                     "comuna_id": _com_id,
                                     "de_donde_salio": f"CARGADO POR USUARIO {user.get('username', '')}",
-                                    "created_by": user.get("id"),
                                     "creado_en": str(datetime.date.today()),
                                 }).execute()
                                 _dnis_existentes.add(_dni)
