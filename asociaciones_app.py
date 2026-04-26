@@ -780,7 +780,6 @@ def asociaciones_screen():
                                     "comuna_id": _com_id,
                                     "latitud": _lat,
                                     "longitud": _lon,
-                                    "created_by": user.get("id"),
                                 }).execute()
                                 _exitosos_asoc += 1
                             except Exception as _e:
