@@ -4,6 +4,7 @@ import pandas as pd
 import datetime
 import personas_scope_rules
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
+from constants import VERTICALES_SEGMENTOS
 
 
 # =========================
@@ -316,17 +317,18 @@ def render_reuniones_screen(user: dict, supabase):
             "solo_programadas": True,
         })
 
-        # Filtro por segmento (solo para SEGMENTOS)
-        if es_segmentos and not df_prog.empty:
-            opciones_seg_prog = _build_scope_options(df_prog)
-            if opciones_seg_prog:
-                sel_seg_prog = st.selectbox(
-                    "Filtrar por Segmento/Vertical",
-                    ["Todos"] + opciones_seg_prog,
-                    key="prog_seg_flt"
-                )
-                if sel_seg_prog != "Todos":
-                    df_prog = _apply_scope_filter(df_prog, sel_seg_prog)
+        # Filtro por vertical (solo para SEGMENTOS)
+        if es_segmentos:
+            sel_seg_prog = st.selectbox(
+                "Filtrar por Vertical",
+                ["Todos"] + VERTICALES_SEGMENTOS,
+                key="prog_seg_flt",
+            )
+            if sel_seg_prog != "Todos" and not df_prog.empty:
+                df_prog = df_prog[
+                    df_prog["scope_tipo"].str.upper().eq("VERTICAL") &
+                    df_prog["scope_valor"].eq(sel_seg_prog)
+                ]
 
         if df_prog.empty:
             st.info("No hay actividades programadas.")
@@ -385,17 +387,18 @@ def render_reuniones_screen(user: dict, supabase):
             "solo_historial": True,
         })
 
-        # Filtro por segmento (solo para SEGMENTOS)
-        if es_segmentos and not df_hist.empty:
-            opciones_seg_hist = _build_scope_options(df_hist)
-            if opciones_seg_hist:
-                sel_seg_hist = st.selectbox(
-                    "Filtrar por Segmento/Vertical",
-                    ["Todos"] + opciones_seg_hist,
-                    key="hist_seg_flt"
-                )
-                if sel_seg_hist != "Todos":
-                    df_hist = _apply_scope_filter(df_hist, sel_seg_hist)
+        # Filtro por vertical (solo para SEGMENTOS)
+        if es_segmentos:
+            sel_seg_hist = st.selectbox(
+                "Filtrar por Vertical",
+                ["Todos"] + VERTICALES_SEGMENTOS,
+                key="hist_seg_flt",
+            )
+            if sel_seg_hist != "Todos" and not df_hist.empty:
+                df_hist = df_hist[
+                    df_hist["scope_tipo"].str.upper().eq("VERTICAL") &
+                    df_hist["scope_valor"].eq(sel_seg_hist)
+                ]
 
         if df_hist.empty:
             st.info("No se encontraron actividades con los filtros aplicados.")

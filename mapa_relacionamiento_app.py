@@ -15,7 +15,7 @@ except ImportError:
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 from db import get_supabase
-from constants import BARRIOS_POR_COMUNA
+from constants import BARRIOS_POR_COMUNA, VERTICALES_SEGMENTOS
 from personas_app import (
     sugerir_direcciones_caba,
     normalizar_domicilio_caba,
@@ -38,17 +38,15 @@ _TIPO_A_VERTICAL = {
 
 
 @st.cache_data(ttl=300)
-def _get_inst_vertical_map() -> dict:
-    """Retorna {nombre_institucion: vertical} cruzando mapa_relacionamiento con asociaciones."""
+def _get_user_vertical_map() -> dict:
+    """Retorna {user_id: vertical} desde la tabla usuarios."""
     supabase = get_supabase()
-    res = supabase.table("asociaciones").select("nombre, tipo").execute()
-    result = {}
-    for r in (res.data or []):
-        nom = (r.get("nombre") or "").strip()
-        tipo = (r.get("tipo") or "").strip()
-        if nom:
-            result[nom] = _TIPO_A_VERTICAL.get(tipo, "Otro")
-    return result
+    res = supabase.table("usuarios").select("id, vertical").execute()
+    return {
+        r["id"]: (r.get("vertical") or "").strip().upper()
+        for r in (res.data or [])
+        if r.get("id") is not None
+    }
 
 TIPOS_INTERACCION_REL = ["Reunión", "Llamada", "WhatsApp", "Email", "Presencial", "Otro"]
 RESULTADOS_INTERACCION_REL = ["POSITIVO", "NEUTRO", "NEGATIVO"]
@@ -522,11 +520,11 @@ def render(user: dict):
         st.info("No hay contactos en el mapa de relacionamiento.")
         return
 
-    # Para SEGMENTOS: derivar columna Segmento antes de copiar el df
+    # Para SEGMENTOS: derivar columna Segmento desde el usuario creador
     if es_segmentos and not df.empty:
-        inst_vert_map = _get_inst_vertical_map()
-        df["Segmento"] = df["institucion"].apply(
-            lambda x: inst_vert_map.get(str(x).strip(), "Otro") if x else "Otro"
+        user_vert_map = _get_user_vertical_map()
+        df["Segmento"] = df["created_by"].apply(
+            lambda x: user_vert_map.get(x, "") if x is not None else ""
         )
 
     # Inicializar filtros
@@ -570,8 +568,7 @@ def render(user: dict):
 
         # Filtro por Segmento/Vertical (solo visible para SEGMENTOS)
         if es_segmentos and "Segmento" in df.columns:
-            segs_disponibles = ["Todos"] + sorted(df["Segmento"].dropna().unique().tolist())
-            st.selectbox("Segmento/Vertical", segs_disponibles, key="flt_rel_seg")
+            st.selectbox("Segmento/Vertical", ["Todos"] + VERTICALES_SEGMENTOS, key="flt_rel_seg")
 
         st.text_input("Búsqueda libre...", key="flt_rel_txt")
         st.button("Limpiar filtros", on_click=limpiar_filtros)

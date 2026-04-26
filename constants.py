@@ -1,3 +1,16 @@
+VERTICALES_SEGMENTOS: list[str] = [
+    "GENERACION_PLATEADA",
+    "MIGRANTES",
+    "CULTO",
+    "CCAA",
+    "PYMES",
+    "JOVENES_EMPRESARIOS",
+    "INNOVACION_TECNOLOGIA",
+    "EDUCACION",
+    "SALUD",
+    "CULTURA",
+]
+
 BARRIOS_POR_COMUNA: dict[int, list[str]] = {
     1: ["Retiro", "San Nicolás", "Puerto Madero", "San Telmo", "Montserrat", "Constitución"],
     2: ["Recoleta"],
