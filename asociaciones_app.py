@@ -3,10 +3,12 @@ import streamlit as st
 import pandas as pd
 import requests
 import datetime
+import io
 
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 from db import get_supabase
+from permisos import allowed_modules
 import asociaciones_edicion
 
 # Mapa interactivo (click + tooltip)
@@ -595,14 +597,209 @@ def asociaciones_screen():
         st.session_state["selected_asoc_id"] = None
     if "asoc_ficha_abierta" not in st.session_state:
         st.session_state["asoc_ficha_abierta"] = True
+    if "show_csv_asoc" not in st.session_state:
+        st.session_state["show_csv_asoc"] = False
+    if "csv_asoc_paso" not in st.session_state:
+        st.session_state["csv_asoc_paso"] = 1
+
+    # Determinar si puede cargar CSV
+    _rol_usr_asoc = (user.get("rol") or "").strip().upper()
+    _puede_csv_asoc = _rol_usr_asoc in ["MASTER", "CABEZA"] and "Asociaciones" in allowed_modules(user)
 
     # =========================
-    # Botón alta
+    # Botones de acción
     # =========================
-    cbtn, _ = st.columns([1, 6])
+    if _puede_csv_asoc:
+        cbtn, cbtn_csv, _ = st.columns([1, 1, 5])
+    else:
+        cbtn, _ = st.columns([1, 6])
     with cbtn:
         if st.button("➕ Agregar asociación"):
             st.session_state["show_new_asoc"] = not st.session_state["show_new_asoc"]
+            st.session_state["show_csv_asoc"] = False
+    if _puede_csv_asoc:
+        with cbtn_csv:
+            if st.button("📄 Cargar CSV masivo"):
+                st.session_state["show_csv_asoc"] = not st.session_state["show_csv_asoc"]
+                st.session_state["show_new_asoc"] = False
+                st.session_state["csv_asoc_paso"] = 1
+
+    # =========================
+    # Carga masiva CSV asociaciones
+    # =========================
+    if _puede_csv_asoc and st.session_state["show_csv_asoc"]:
+        st.markdown("### 📄 Carga masiva de Asociaciones por CSV")
+        _TIPOS_VALIDOS = ["Centro de Jubilados", "Clubes", "Espacios Culturales", "Espacios de Culto", "Local comercial"]
+
+        # -----------------------------------------------
+        st.markdown("### Paso 1 — Descargar plantilla para normalizar direcciones")
+        # -----------------------------------------------
+        st.info(
+            "Completá la plantilla con los datos crudos. "
+            "En el **Paso 2** el sistema normalizará las direcciones automáticamente."
+        )
+        _tmpl_norm_df = pd.DataFrame(columns=["Nombre", "Tipo", "Comuna", "Direccion_Original", "Direccion_Normalizada"])
+        st.download_button(
+            "📥 Descargar plantilla para normalización",
+            data=_tmpl_norm_df.to_csv(index=False).encode("utf-8"),
+            file_name="plantilla_normalizacion_asociaciones.csv",
+            mime="text/csv",
+            key="dl_tmpl_norm",
+        )
+        st.caption(f"Tipos válidos: {', '.join(_TIPOS_VALIDOS)}")
+
+        st.markdown("---")
+        # -----------------------------------------------
+        st.markdown("### Paso 2 — Subir plantilla y normalizar direcciones")
+        # -----------------------------------------------
+        st.info(
+            "Subí la plantilla completada (con **Direccion_Normalizada** vacía). "
+            "El sistema rellenará esa columna y te dará el archivo listo para el Paso 3."
+        )
+        _norm_file = st.file_uploader(
+            "Subir plantilla del Paso 1",
+            type=["csv"],
+            key="csv_norm_uploader_asoc",
+        )
+        if _norm_file is not None:
+            try:
+                _df_norm = pd.read_csv(_norm_file)
+                _df_norm.columns = [str(c).strip() for c in _df_norm.columns]
+
+                # Asegurarse de que existe la columna de salida
+                if "Direccion_Original" not in _df_norm.columns:
+                    st.error("La plantilla no tiene la columna 'Direccion_Original'.")
+                else:
+                    st.write(f"Filas a procesar: {len(_df_norm)}")
+                    if st.button("⚙️ Normalizar direcciones", key="btn_normalizar_asoc"):
+                        _progreso_norm = st.progress(0)
+                        _resultados_norm = []
+                        for _i, _row in _df_norm.iterrows():
+                            _dir_orig = str(_row.get("Direccion_Original", "")).strip()
+                            if _dir_orig:
+                                _dir_n, _ = normalizar_domicilio_caba(_dir_orig)
+                                _resultados_norm.append(_dir_n or _dir_orig)
+                            else:
+                                _resultados_norm.append("")
+                            _progreso_norm.progress((_i + 1) / len(_df_norm))
+
+                        _df_norm["Direccion_Normalizada"] = _resultados_norm
+                        _csv_norm_out = _df_norm.to_csv(index=False).encode("utf-8")
+                        st.success("¡Normalización completada! Descargá el archivo, revisalo y usalo en el Paso 3.")
+                        st.download_button(
+                            "📥 Descargar archivo normalizado",
+                            data=_csv_norm_out,
+                            file_name="asociaciones_normalizadas.csv",
+                            mime="text/csv",
+                            key="dl_norm_result",
+                        )
+            except Exception as _e:
+                st.error(f"Error al procesar el archivo: {_e}")
+
+        st.markdown("---")
+        # -----------------------------------------------
+        st.markdown("### Paso 3 — Subir CSV final e importar")
+        # -----------------------------------------------
+        st.info(
+            "Subí el CSV final con las columnas obligatorias: "
+            "**Nombre**, **Tipo**, **Direccion**, **Comuna**."
+        )
+        _final_file = st.file_uploader(
+            "Subir CSV final",
+            type=["csv"],
+            key="csv_final_uploader_asoc",
+        )
+        if _final_file is not None:
+            try:
+                _df_final = pd.read_csv(_final_file)
+                _df_final.columns = [str(c).strip() for c in _df_final.columns]
+
+                # Mapeo tolerante de columnas
+                _asoc_col_alias = {
+                    "NOMBRE": "Nombre",
+                    "TIPO": "Tipo",
+                    "DIRECCION": "Direccion",
+                    "DIRECCIÓN": "Direccion",
+                    "DIRECCION_NORMALIZADA": "Direccion",
+                    "DIRECCIÓN_NORMALIZADA": "Direccion",
+                    "COMUNA": "Comuna",
+                }
+                _df_final = _df_final.rename(
+                    columns={c: _asoc_col_alias.get(c.upper(), c) for c in _df_final.columns}
+                )
+
+                _req_final = ["Nombre", "Tipo", "Direccion", "Comuna"]
+                _miss_final = [c for c in _req_final if c not in _df_final.columns]
+                if _miss_final:
+                    st.error(f"Faltan columnas obligatorias: {', '.join(_miss_final)}")
+                else:
+                    st.write(f"**Vista previa ({min(5, len(_df_final))} filas):**")
+                    st.dataframe(_df_final.head(5), use_container_width=True)
+
+                    if st.button("✅ Procesar e importar", key="btn_import_asoc"):
+                        _supabase = get_supabase()
+                        _exitosos_asoc, _errores_asoc = 0, []
+                        _prog_asoc = st.progress(0)
+                        _total_asoc = len(_df_final)
+
+                        for _idx, _row in _df_final.iterrows():
+                            try:
+                                _nombre = str(_row.get("Nombre", "")).strip()
+                                _tipo = str(_row.get("Tipo", "")).strip()
+                                _dir = str(_row.get("Direccion", "")).strip()
+                                _com_raw = _row.get("Comuna")
+
+                                if not _nombre or not _tipo or not _dir:
+                                    _errores_asoc.append(f"Fila {_idx + 2}: Nombre, Tipo y Dirección son obligatorios.")
+                                    continue
+
+                                if _tipo not in _TIPOS_VALIDOS:
+                                    _errores_asoc.append(
+                                        f"Fila {_idx + 2}: Tipo '{_tipo}' no válido. "
+                                        f"Usar uno de: {', '.join(_TIPOS_VALIDOS)}"
+                                    )
+                                    continue
+
+                                # Determinar comuna_id
+                                if (user.get("ambito") or "").strip().upper() == "COMUNA":
+                                    _com_id = int(user.get("comuna_id") or 1)
+                                else:
+                                    try:
+                                        _com_id = int(float(str(_com_raw).strip()))
+                                    except Exception:
+                                        _errores_asoc.append(f"Fila {_idx + 2}: Comuna inválida ('{_com_raw}').")
+                                        continue
+
+                                # Geocodificar
+                                _lat, _lon = geocodificar_con_reintentos(_dir)
+
+                                _supabase.table("asociaciones").insert({
+                                    "nombre": _nombre,
+                                    "tipo": _tipo,
+                                    "direccion": _dir,
+                                    "comuna_id": _com_id,
+                                    "latitud": _lat,
+                                    "longitud": _lon,
+                                    "created_by": user.get("id"),
+                                }).execute()
+                                _exitosos_asoc += 1
+                            except Exception as _e:
+                                _errores_asoc.append(f"Fila {_idx + 2}: {_e}")
+
+                            _prog_asoc.progress((_idx + 1) / _total_asoc)
+
+                        st.success(f"Finalizado. ✅ Insertadas: {_exitosos_asoc} | ❌ Errores: {len(_errores_asoc)}")
+                        if _errores_asoc:
+                            with st.expander("Ver detalle de errores"):
+                                for _err in _errores_asoc:
+                                    st.caption(_err)
+                        if _exitosos_asoc > 0:
+                            st.session_state["show_csv_asoc"] = False
+                            st.rerun()
+            except Exception as _e:
+                st.error(f"Error al procesar el archivo: {_e}")
+
+        st.markdown("---")
 
     # =========================
     # Alta asociación

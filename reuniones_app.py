@@ -36,9 +36,9 @@ def get_reuniones_scope(user: dict):
     if ambito == "GLOBAL" and rol == "MASTER":
         return "GLOBAL", None
         
-    # SEGMENTOS ve todo
+    # SEGMENTOS ve todo excepto reuniones de ámbito COMUNA
     if ambito == "SEGMENTOS":
-        return "GLOBAL", None
+        return "SEGMENTOS_GLOBAL", None
         
     # COMUNA
     if ambito == "COMUNA":
@@ -62,6 +62,9 @@ def fetch_reuniones(supabase, user_ctx: dict, filters: dict = None):
         q = q.eq("scope_tipo", "COMUNA").eq("scope_valor", scope_valor)
     elif scope_tipo == "VERTICAL":
         q = q.eq("scope_tipo", "VERTICAL").eq("scope_valor", scope_valor)
+    elif scope_tipo == "SEGMENTOS_GLOBAL":
+        # SEGMENTOS ve GLOBAL y VERTICAL, pero NO las reuniones de COMUNA
+        q = q.neq("scope_tipo", "COMUNA")
     
     # Aplicar Filtros UI
     if filters:

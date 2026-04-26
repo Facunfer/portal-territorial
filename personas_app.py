@@ -3,11 +3,13 @@ import streamlit as st
 import pandas as pd
 import datetime
 import requests
+import io
 
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 from db import get_supabase
 from constants import BARRIOS_POR_COMUNA
+from permisos import allowed_modules
 import personas_edicion
 import personas_scope_rules
 
@@ -645,6 +647,8 @@ def personas_screen():
         st.session_state["selected_persona_id"] = None
     if "ficha_abierta" not in st.session_state:
         st.session_state["ficha_abierta"] = True
+    if "show_csv_personas" not in st.session_state:
+        st.session_state["show_csv_personas"] = False
 
     # --- Lógica de Visibilidad por Vertical (Toggle) ---
     force_vertical = True
@@ -657,11 +661,141 @@ def personas_screen():
         force_vertical = True
     # ----------------------------------------------------
 
-    # botón alta
-    cbtn, _ = st.columns([1, 6])
+    # Determinar si puede cargar CSV
+    _rol_usr = (user.get("rol") or "").strip().upper()
+    _puede_csv_personas = _rol_usr in ["MASTER", "CABEZA"] and "Personas" in allowed_modules(user)
+
+    # botones de acción
+    if _puede_csv_personas:
+        cbtn, cbtn_csv, _ = st.columns([1, 1, 5])
+    else:
+        cbtn, _ = st.columns([1, 6])
     with cbtn:
         if st.button("➕ Agregar persona"):
             st.session_state["show_new_persona"] = not st.session_state["show_new_persona"]
+            st.session_state["show_csv_personas"] = False
+    if _puede_csv_personas:
+        with cbtn_csv:
+            if st.button("📄 Cargar CSV masivo"):
+                st.session_state["show_csv_personas"] = not st.session_state["show_csv_personas"]
+                st.session_state["show_new_persona"] = False
+
+    # =========================
+    # Carga masiva CSV personas
+    # =========================
+    if _puede_csv_personas and st.session_state["show_csv_personas"]:
+        st.markdown("### 📄 Carga masiva de Personas por CSV")
+
+        # Plantilla descargable
+        _tmpl_cols = ["Nombre y Apellido", "Telefono", "DNI", "Comuna"]
+        _tmpl_df = pd.DataFrame(columns=_tmpl_cols)
+        _tmpl_csv = _tmpl_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "📥 Descargar plantilla CSV",
+            data=_tmpl_csv,
+            file_name="plantilla_personas.csv",
+            mime="text/csv",
+        )
+        st.caption("Completá la plantilla con los datos y volvé a subir el archivo.")
+
+        _csv_file = st.file_uploader("Subir CSV completado", type=["csv"], key="csv_uploader_personas")
+        if _csv_file is not None:
+            try:
+                _df_csv = pd.read_csv(_csv_file)
+                _df_csv.columns = [str(c).strip() for c in _df_csv.columns]
+
+                # Mapeo tolerante de nombres de columna
+                _col_alias = {
+                    "NOMBRE Y APELLIDO": "Nombre y Apellido",
+                    "NOMBRE_APELLIDO": "Nombre y Apellido",
+                    "NOMBRE": "Nombre y Apellido",
+                    "TELEFONO": "Telefono",
+                    "TELÉFONO": "Telefono",
+                    "DNI": "DNI",
+                    "COMUNA": "Comuna",
+                }
+                _df_csv = _df_csv.rename(
+                    columns={c: _col_alias.get(c.upper(), c) for c in _df_csv.columns}
+                )
+
+                _required = ["Nombre y Apellido", "Telefono", "DNI", "Comuna"]
+                _missing = [c for c in _required if c not in _df_csv.columns]
+                if _missing:
+                    st.error(f"Faltan columnas obligatorias: {', '.join(_missing)}")
+                else:
+                    st.write(f"**Vista previa ({min(5, len(_df_csv))} filas):**")
+                    st.dataframe(_df_csv.head(5), use_container_width=True)
+
+                    if st.button("✅ Procesar e importar", key="btn_import_personas"):
+                        _supabase = get_supabase()
+
+                        # Traer todos los DNIs existentes de una sola vez
+                        _dni_rows, _pg = [], 0
+                        while True:
+                            _r = _supabase.table("personas").select("dni").range(_pg * 1000, (_pg + 1) * 1000 - 1).execute()
+                            _dni_rows.extend(_r.data or [])
+                            if len(_r.data or []) < 1000:
+                                break
+                            _pg += 1
+                        _dnis_existentes = {str(r["dni"]).strip() for r in _dni_rows if r.get("dni")}
+
+                        _exitosos, _errores_lista = 0, []
+                        _progreso = st.progress(0)
+                        _total = len(_df_csv)
+
+                        for _idx, _row in _df_csv.iterrows():
+                            try:
+                                _nom = str(_row.get("Nombre y Apellido", "")).strip()
+                                _tel = str(_row.get("Telefono", "")).strip()
+                                _dni = str(_row.get("DNI", "")).strip()
+                                _com_raw = _row.get("Comuna")
+
+                                if not _nom or not _tel or not _dni:
+                                    _errores_lista.append(f"Fila {_idx + 2}: Nombre, Teléfono y DNI son obligatorios.")
+                                    continue
+
+                                if _dni in _dnis_existentes:
+                                    _errores_lista.append(f"Fila {_idx + 2}: DNI {_dni} ya existe en la base.")
+                                    continue
+
+                                # Determinar comuna_id
+                                if (user.get("ambito") or "").strip().upper() == "COMUNA":
+                                    _com_id = int(user.get("comuna_id") or 1)
+                                else:
+                                    try:
+                                        _com_id = int(float(str(_com_raw).strip()))
+                                    except Exception:
+                                        _errores_lista.append(f"Fila {_idx + 2}: Comuna inválida ('{_com_raw}').")
+                                        continue
+
+                                _supabase.table("personas").insert({
+                                    "nombre_apellido": _nom,
+                                    "telefono": _tel,
+                                    "dni": _dni,
+                                    "comuna_id": _com_id,
+                                    "de_donde_salio": f"CARGADO POR USUARIO {user.get('username', '')}",
+                                    "created_by": user.get("id"),
+                                    "creado_en": str(datetime.date.today()),
+                                }).execute()
+                                _dnis_existentes.add(_dni)
+                                _exitosos += 1
+                            except Exception as _e:
+                                _errores_lista.append(f"Fila {_idx + 2}: {_e}")
+
+                            _progreso.progress((_idx + 1) / _total)
+
+                        st.success(f"Finalizado. ✅ Insertadas: {_exitosos} | ❌ Errores: {len(_errores_lista)}")
+                        if _errores_lista:
+                            with st.expander("Ver detalle de errores"):
+                                for _err in _errores_lista:
+                                    st.caption(_err)
+                        if _exitosos > 0:
+                            st.session_state["show_csv_personas"] = False
+                            st.rerun()
+            except Exception as _e:
+                st.error(f"Error al procesar el archivo: {_e}")
+
+        st.markdown("---")
 
     # alta persona
     if st.session_state["show_new_persona"]:
