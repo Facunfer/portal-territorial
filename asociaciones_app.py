@@ -4,9 +4,9 @@ import pandas as pd
 import requests
 import datetime
 
-from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
+from db import get_supabase
 import asociaciones_edicion
 
 # Mapa interactivo (click + tooltip)
@@ -16,16 +16,6 @@ try:
     HAS_FOLIUM = True
 except Exception:
     HAS_FOLIUM = False
-
-
-# =========================
-# Cliente Supabase
-# =========================
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
 
 
 # =========================
@@ -768,12 +758,7 @@ def asociaciones_screen():
                   else:
                        st.write("") # placeholder
 
-        # Row 2: Barrio (Nuevo)
-        # Importamos BARRIOS_POR_COMUNA localmente si no está
-        try:
-            from personas_edicion import BARRIOS_POR_COMUNA
-        except ImportError:
-            BARRIOS_POR_COMUNA = {}
+        from constants import BARRIOS_POR_COMUNA
 
         # Construir opciones de barrio basado en lo disponible en el DF + Info de Comuna
         barrios_disponibles_df = set(df['barrio'].unique()) if 'barrio' in df.columns else set()

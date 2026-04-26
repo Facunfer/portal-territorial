@@ -12,20 +12,17 @@ except ImportError:
     HAS_FOLIUM = False
 
 
-from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
-# Reutilizamos funciones de geocodificación y constantes desde personas_app
+from db import get_supabase
+from constants import BARRIOS_POR_COMUNA
 from personas_app import (
     sugerir_direcciones_caba,
     normalizar_domicilio_caba,
     geocodificar_con_reintentos,
-    BARRIOS_POR_COMUNA,
-    LOCALE_ES
+    LOCALE_ES,
 )
 
-# Verticales que pueden seleccionar instituciones existentes (asociaciones)
-# Key: vertical del usuario, Value: tipo(s) de asociación que puede ver
 VERTICAL_ASOC_TIPO_MAP = {
     "CCAA": ["Local comercial"],
     "CULTO": ["Espacios de Culto"],
@@ -35,12 +32,6 @@ VERTICAL_ASOC_TIPO_MAP = {
 
 TIPOS_INTERACCION_REL = ["Reunión", "Llamada", "WhatsApp", "Email", "Presencial", "Otro"]
 RESULTADOS_INTERACCION_REL = ["POSITIVO", "NEUTRO", "NEGATIVO"]
-
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
 
 # =========================
 # Helpers

@@ -3,20 +3,12 @@ import streamlit as st
 import pandas as pd
 import datetime
 import re
-from supabase import create_client, Client
 import plotly.express as px
 
 # Reuse existing scope rules
 import personas_scope_rules
 import permisos
-
-# =========================
-# CONFIG / CONSTANTS
-# =========================
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
+from db import get_supabase
 
 POS_SET = {"positiva", "positivo", "interesado", "ok", "si", "muy interesado", "verde"}
 

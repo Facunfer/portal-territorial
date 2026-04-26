@@ -1,7 +1,8 @@
 # app.py
 import streamlit as st
-from supabase import create_client, Client
+import datetime
 
+from db import get_supabase
 import permisos
 import router_personas
 import router_asociaciones
@@ -12,16 +13,6 @@ import mapa_relacionamiento_app
 import kpis_app
 import ia_app # <--- Modulo IA
 import styles  # <--- Importamos el modulo de estilos
-
-# =========================
-# Cliente Supabase
-# =========================
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
-
 
 # =========================
 # Auth
@@ -53,11 +44,26 @@ def get_user(username: str, password: str):
     }
 
 
+_MAX_INTENTOS = 5
+_BLOQUEO_SEGUNDOS = 300
+
+
 def show_login():
-    # Inject styles also in Login
     styles.load_css()
-    
-    st.title("PORTAL TERRITORIAL – LOGIN") # Uppercase for style
+    st.title("PORTAL TERRITORIAL – LOGIN")
+
+    # Inicializar contadores de rate limiting
+    if "login_intentos" not in st.session_state:
+        st.session_state["login_intentos"] = 0
+        st.session_state["login_bloqueado_hasta"] = None
+
+    ahora = datetime.datetime.now()
+    bloqueado_hasta = st.session_state.get("login_bloqueado_hasta")
+
+    if bloqueado_hasta and ahora < bloqueado_hasta:
+        restante = int((bloqueado_hasta - ahora).total_seconds())
+        st.error(f"Demasiados intentos fallidos. Intentá de nuevo en {restante} segundos.")
+        return
 
     username = st.text_input("Usuario")
     password = st.text_input("Contraseña", type="password")
@@ -69,9 +75,19 @@ def show_login():
 
         user = get_user(username, password)
         if not user:
-            st.error("Credenciales incorrectas.")
+            st.session_state["login_intentos"] += 1
+            intentos = st.session_state["login_intentos"]
+            if intentos >= _MAX_INTENTOS:
+                st.session_state["login_bloqueado_hasta"] = ahora + datetime.timedelta(seconds=_BLOQUEO_SEGUNDOS)
+                st.session_state["login_intentos"] = 0
+                st.error("Demasiados intentos fallidos. Acceso bloqueado por 5 minutos.")
+            else:
+                restantes = _MAX_INTENTOS - intentos
+                st.error(f"Credenciales incorrectas. Intentos restantes: {restantes}")
             return
 
+        st.session_state["login_intentos"] = 0
+        st.session_state["login_bloqueado_hasta"] = None
         st.session_state["user"] = user
         st.rerun()
 

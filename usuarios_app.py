@@ -1,16 +1,7 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client, Client
 
-
-# =========================
-# Cliente Supabase
-# =========================
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
+from db import get_supabase
 
 
 # =========================

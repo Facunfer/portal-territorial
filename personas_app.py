@@ -4,21 +4,12 @@ import pandas as pd
 import datetime
 import requests
 
-from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
+from db import get_supabase
+from constants import BARRIOS_POR_COMUNA
 import personas_edicion
 import personas_scope_rules
-
-
-# =========================
-# Cliente Supabase
-# =========================
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
 
 
 # =========================
@@ -57,26 +48,6 @@ LOCALE_ES = {
 }
 
 
-# =========================
-# Barrios por comuna (CABA)
-# =========================
-BARRIOS_POR_COMUNA = {
-    1: ["Retiro", "San Nicolás", "Puerto Madero", "San Telmo", "Montserrat", "Constitución"],
-    2: ["Recoleta"],
-    3: ["Balvanera", "San Cristóbal"],
-    4: ["La Boca", "Barracas", "Parque Patricios", "Nueva Pompeya"],
-    5: ["Almagro", "Boedo"],
-    6: ["Caballito"],
-    7: ["Flores", "Parque Chacabuco"],
-    8: ["Villa Soldati", "Villa Riachuelo", "Villa Lugano"],
-    9: ["Liniers", "Mataderos", "Parque Avellaneda"],
-    10: ["Villa Real", "Monte Castro", "Versalles", "Floresta", "Vélez Sarsfield", "Villa Luro"],
-    11: ["Villa General Mitre", "Villa Devoto", "Villa del Parque", "Villa Santa Rita"],
-    12: ["Coghlan", "Saavedra", "Villa Pueyrredón", "Villa Urquiza"],
-    13: ["Belgrano", "Colegiales", "Núñez"],
-    14: ["Palermo"],
-    15: ["Agronomía", "Chacarita", "La Paternal", "Villa Crespo", "Villa Ortúzar", "Parque Chas"],
-}
 
 
 # =========================

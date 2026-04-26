@@ -1,19 +1,13 @@
 # usuarios_admin.py
 import streamlit as st
 import pandas as pd
+import datetime
 
-from supabase import create_client, Client
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
+from db import get_supabase
 import permisos
 import personas_scope_rules
-
-
-@st.cache_resource
-def get_supabase() -> Client:
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
 
 
 LOCALE_ES = {
@@ -55,16 +49,13 @@ def _fetch_users_for_admin(user: dict) -> pd.DataFrame:
             q = q.eq("comuna_id", int(user["comuna_id"]))
 
     elif scope.kind == "USERS_VERTICAL":
-        try:
-            amb, vert = (scope.value or "").split("|", 1)
-            amb = (amb or "").strip()
-            vert = (vert or "").strip()
-            if amb:
-                q = q.eq("ambito", amb)
-            if vert:
-                q = q.eq("vertical", vert)
-        except Exception:
-            pass
+        parts = (scope.value or "").split("|", 1)
+        amb = parts[0].strip() if len(parts) > 0 else ""
+        vert = parts[1].strip() if len(parts) > 1 else ""
+        if amb:
+            q = q.eq("ambito", amb)
+        if vert:
+            q = q.eq("vertical", vert)
 
     res = q.execute()
     return pd.DataFrame(res.data or [])
@@ -278,10 +269,8 @@ def _delete_asignaciones(usuario_id: int, objeto_tipo: str, object_ids: list[int
 
 
 # ==============================================================================
-# HELPERS: Semáforos y Feedback (Duplicado de personas_app/asociaciones_app
-# para evitar refactor masivo de imports cruzados en este paso)
+# HELPERS: Semáforos y Feedback
 # ==============================================================================
-import datetime
 
 def _chunk_list(xs, size: int):
     xs = list(xs or [])

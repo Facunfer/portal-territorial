@@ -2,21 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import datetime
-from supabase import create_client, Client
+
+from db import get_supabase
 import personas_edicion
 
-# ==============================================================================
-# CLIENTE SUPABASE & CACHE
-# ==============================================================================
-
-@st.cache_resource
-def get_supabase() -> Client:
-    """Retorna el cliente Supabase configurado en st.secrets."""
-    url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["anon_key"]
-    return create_client(url, key)
-
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def fetch_global_data():
     """
     Trae los datos base necesarios para el dashboard usando paginación total.
