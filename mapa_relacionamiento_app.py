@@ -27,8 +27,28 @@ VERTICAL_ASOC_TIPO_MAP = {
     "CCAA": ["Local comercial"],
     "CULTO": ["Espacios de Culto"],
     "CULTURA": ["Espacios Culturales"],
-    "ASOCIACIONES_CIVILES": ["Centros de Jubilados", "Clubes", "Espacios Culturales"],
 }
+
+# Mapeo inverso: tipo de asociación → vertical
+_TIPO_A_VERTICAL = {
+    tipo: vert
+    for vert, tipos in VERTICAL_ASOC_TIPO_MAP.items()
+    for tipo in tipos
+}
+
+
+@st.cache_data(ttl=300)
+def _get_inst_vertical_map() -> dict:
+    """Retorna {nombre_institucion: vertical} cruzando mapa_relacionamiento con asociaciones."""
+    supabase = get_supabase()
+    res = supabase.table("asociaciones").select("nombre, tipo").execute()
+    result = {}
+    for r in (res.data or []):
+        nom = (r.get("nombre") or "").strip()
+        tipo = (r.get("tipo") or "").strip()
+        if nom:
+            result[nom] = _TIPO_A_VERTICAL.get(tipo, "Otro")
+    return result
 
 TIPOS_INTERACCION_REL = ["Reunión", "Llamada", "WhatsApp", "Email", "Presencial", "Otro"]
 RESULTADOS_INTERACCION_REL = ["POSITIVO", "NEUTRO", "NEGATIVO"]
@@ -497,10 +517,17 @@ def render(user: dict):
     # DATA Y FILTROS
     # ==========================================
     df = get_mapa_relacionamiento(user)
-    
+
     if df.empty:
         st.info("No hay contactos en el mapa de relacionamiento.")
         return
+
+    # Para SEGMENTOS: derivar columna Segmento antes de copiar el df
+    if es_segmentos and not df.empty:
+        inst_vert_map = _get_inst_vertical_map()
+        df["Segmento"] = df["institucion"].apply(
+            lambda x: inst_vert_map.get(str(x).strip(), "Otro") if x else "Otro"
+        )
 
     # Inicializar filtros
     if "flt_rel_inst" not in st.session_state: st.session_state["flt_rel_inst"] = "Todas"
@@ -509,7 +536,8 @@ def render(user: dict):
     if "flt_rel_com" not in st.session_state: st.session_state["flt_rel_com"] = "Todas"
     if "flt_rel_sem" not in st.session_state: st.session_state["flt_rel_sem"] = "Todos"
     if "flt_rel_txt" not in st.session_state: st.session_state["flt_rel_txt"] = ""
-    
+    if "flt_rel_seg" not in st.session_state: st.session_state["flt_rel_seg"] = "Todos"
+
     def limpiar_filtros():
         st.session_state["flt_rel_inst"] = "Todas"
         st.session_state["flt_rel_inf"] = "Todos"
@@ -517,14 +545,14 @@ def render(user: dict):
         st.session_state["flt_rel_com"] = "Todas"
         st.session_state["flt_rel_sem"] = "Todos"
         st.session_state["flt_rel_txt"] = ""
+        st.session_state["flt_rel_seg"] = "Todos"
 
     # UI Filtros
     with st.expander("🔍 Buscador y Filtros", expanded=True):
         c1, c2, c3, c4, c5 = st.columns(5)
-        
-        # Opciones dinámicas
+
         list_inst = ["Todas"] + sorted(df["institucion"].dropna().unique().tolist())
-        
+
         with c1:
             st.selectbox("Institución", list_inst, key="flt_rel_inst")
         with c2:
@@ -539,9 +567,13 @@ def render(user: dict):
                 st.selectbox("Comuna", list_com, key="flt_rel_com")
         with c5:
             st.selectbox("Semáforo", ["Todos", "🟢 <30 días", "🟡 30–60 días", "🔴 >60 días", "⚫ SIN FECHA"], key="flt_rel_sem")
-            
+
+        # Filtro por Segmento/Vertical (solo visible para SEGMENTOS)
+        if es_segmentos and "Segmento" in df.columns:
+            segs_disponibles = ["Todos"] + sorted(df["Segmento"].dropna().unique().tolist())
+            st.selectbox("Segmento/Vertical", segs_disponibles, key="flt_rel_seg")
+
         st.text_input("Búsqueda libre...", key="flt_rel_txt")
-        
         st.button("Limpiar filtros", on_click=limpiar_filtros)
 
     # Aplico Filtros
@@ -556,6 +588,8 @@ def render(user: dict):
         df_f = df_f[df_f["comuna_id"] == st.session_state["flt_rel_com"]]
     if st.session_state["flt_rel_sem"] != "Todos":
         df_f = df_f[df_f["Semaforo"] == st.session_state["flt_rel_sem"]]
+    if es_segmentos and st.session_state["flt_rel_seg"] != "Todos" and "Segmento" in df_f.columns:
+        df_f = df_f[df_f["Segmento"] == st.session_state["flt_rel_seg"]]
         
     txt = st.session_state["flt_rel_txt"].strip().lower()
     if txt:

@@ -167,13 +167,45 @@ def insert_reunion(supabase, user: dict, data: dict, asistentes_ids: list = None
             
     return res
 
+def _scope_label(scope_tipo: str, scope_valor) -> str:
+    """Etiqueta legible para el scope de una reunión."""
+    st_val = (scope_tipo or "").strip().upper()
+    sv = str(scope_valor or "").strip()
+    if st_val == "VERTICAL":
+        return f"Vertical: {sv}"
+    if st_val == "COMUNA":
+        return f"Comuna {sv}"
+    return "Global"
+
+
+def _build_scope_options(df: pd.DataFrame) -> list:
+    """Opciones únicas de scope para el filtro SEGMENTOS."""
+    if df.empty or "scope_tipo" not in df.columns:
+        return []
+    labels = df.apply(
+        lambda r: _scope_label(r.get("scope_tipo"), r.get("scope_valor")), axis=1
+    )
+    return sorted(labels.unique().tolist())
+
+
+def _apply_scope_filter(df: pd.DataFrame, label: str) -> pd.DataFrame:
+    """Filtra el df por etiqueta de scope seleccionada."""
+    return df[df.apply(
+        lambda r: _scope_label(r.get("scope_tipo"), r.get("scope_valor")) == label, axis=1
+    )]
+
+
 def render_reuniones_screen(user: dict, supabase):
     st.header("🤝 Reuniones / Actividades")
-    
+
+    ambito = (user.get("ambito") or "").strip().upper()
+    es_segmentos = ambito == "SEGMENTOS"
+
     # =========================
-    # 1. Formulario de Carga
+    # 1. Formulario de Carga (oculto para SEGMENTOS)
     # =========================
-    with st.expander("➕ Cargar nueva actividad", expanded=False):
+    if not es_segmentos:
+      with st.expander("➕ Cargar nueva actividad", expanded=False):
         # --- Selector de Asistentes (FUERA del form para interactividad) ---
         st.markdown("#### 👥 Asistentes")
         
@@ -276,14 +308,26 @@ def render_reuniones_screen(user: dict, supabase):
     with tab_prog:
         st.subheader("📅 Actividades Programadas")
         st.caption("Actividades con fecha de hoy o futura que aún no fueron confirmadas.")
-        
+
         # Fetch programadas
         hoy = datetime.date.today()
         df_prog = fetch_reuniones(supabase, user, filters={
             "fecha_desde": hoy,
             "solo_programadas": True,
         })
-        
+
+        # Filtro por segmento (solo para SEGMENTOS)
+        if es_segmentos and not df_prog.empty:
+            opciones_seg_prog = _build_scope_options(df_prog)
+            if opciones_seg_prog:
+                sel_seg_prog = st.selectbox(
+                    "Filtrar por Segmento/Vertical",
+                    ["Todos"] + opciones_seg_prog,
+                    key="prog_seg_flt"
+                )
+                if sel_seg_prog != "Todos":
+                    df_prog = _apply_scope_filter(df_prog, sel_seg_prog)
+
         if df_prog.empty:
             st.info("No hay actividades programadas.")
         else:
@@ -299,6 +343,8 @@ def render_reuniones_screen(user: dict, supabase):
                             st.caption(f"📍 {row['lugar']}")
                         if row.get('necesita_cobertura'):
                             st.caption("📸 Necesita cobertura")
+                        if es_segmentos:
+                            st.caption(f"🏷️ {_scope_label(row.get('scope_tipo'), row.get('scope_valor'))}")
                     with c2:
                         if st.button("✅ Se realizó", key=f"btn_realizada_{row['id']}"):
                             supabase.table("reuniones").update({"realizada": True}).eq("id", row["id"]).execute()
@@ -338,37 +384,60 @@ def render_reuniones_screen(user: dict, supabase):
             "search": search_text,
             "solo_historial": True,
         })
-        
+
+        # Filtro por segmento (solo para SEGMENTOS)
+        if es_segmentos and not df_hist.empty:
+            opciones_seg_hist = _build_scope_options(df_hist)
+            if opciones_seg_hist:
+                sel_seg_hist = st.selectbox(
+                    "Filtrar por Segmento/Vertical",
+                    ["Todos"] + opciones_seg_hist,
+                    key="hist_seg_flt"
+                )
+                if sel_seg_hist != "Todos":
+                    df_hist = _apply_scope_filter(df_hist, sel_seg_hist)
+
         if df_hist.empty:
             st.info("No se encontraron actividades con los filtros aplicados.")
         else:
             st.caption(f"Mostrando {len(df_hist)} actividades.")
-            
+
+            # Para SEGMENTOS: agregar columna de segmento a la tabla
+            if es_segmentos and "scope_tipo" in df_hist.columns:
+                df_hist = df_hist.copy()
+                df_hist["segmento"] = df_hist.apply(
+                    lambda r: _scope_label(r.get("scope_tipo"), r.get("scope_valor")), axis=1
+                )
+
             # Tabla
             cols_to_show = ["fecha", "tipo", "titulo", "lugar", "necesita_cobertura", "created_by_nombre"]
+            if es_segmentos:
+                cols_to_show.insert(2, "segmento")
             cols_to_show = [c for c in cols_to_show if c in df_hist.columns]
-            
+
             cols_map = {
                 "fecha": "Fecha",
+                "segmento": "Segmento",
                 "tipo": "Tipo",
                 "titulo": "Tema",
                 "lugar": "Lugar",
                 "necesita_cobertura": "Cobertura",
-                "created_by_nombre": "Creado por"
+                "created_by_nombre": "Creado por",
             }
-            
+
             df_display = df_hist[cols_to_show].rename(columns=cols_map)
-            
-            # Formatear booleano de cobertura
+
             if "Cobertura" in df_display.columns:
                 df_display["Cobertura"] = df_display["Cobertura"].apply(lambda x: "Sí" if x else "No")
-            
+
             st.dataframe(df_display, use_container_width=True, hide_index=True)
-            
+
             # Detalles expandibles
             if st.checkbox("Ver descripciones desarrolladas", key="hist_descripciones"):
                 for idx, row in df_hist.iterrows():
                     with st.expander(f"{row['fecha']} - {row['titulo']} ({row['tipo']})"):
+                        if es_segmentos:
+                            st.caption(f"🏷️ {_scope_label(row.get('scope_tipo'), row.get('scope_valor'))}")
                         st.write(f"**Lugar:** {row.get('lugar') or '-'}")
                         st.write(f"**Cobertura:** {'Sí' if row.get('necesita_cobertura') else 'No'}")
                         st.write(f"**Descripción:**")

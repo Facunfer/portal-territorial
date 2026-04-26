@@ -16,7 +16,7 @@ VERT_PERSONAS = [
     "CCAA", "PYMES", "JOVENES_EMPRESARIOS", "EDUCACION", "SALUD", "CULTURA",
     "CULTO",
 ]
-VERT_ASOC = ["ASOCIACIONES_CIVILES", "CULTO", "CCAA", "CULTURA"]
+VERT_ASOC = ["CULTO", "CCAA", "CULTURA"]
 
 
 def _up(s: Optional[str]) -> str:
@@ -117,9 +117,9 @@ def personas_scope(user: dict) -> Scope:
 def asociaciones_scope(user: dict) -> Scope:
     """
     Vertical asociaciones:
-      - ASOCIACIONES_CIVILES -> Centros de Jubilados, Clubes, Espacios Culturales
-      - CULTO               -> Espacios de Culto
-      - CENTROS_COMERCIALES -> Local comercial
+      - CULTO  -> Espacios de Culto
+      - CCAA   -> Local comercial
+      - CULTURA -> Espacios Culturales
     """
     # EXTRACTO: siempre ve SOLO lo asignado (independiente del ámbito)
     if get_rol(user) == "EXTRACTO":
@@ -134,7 +134,6 @@ def asociaciones_scope(user: dict) -> Scope:
     if is_vertical_asoc(user):
         v = get_vertical(user)
         tipo_map = {
-            "ASOCIACIONES_CIVILES": "Centros de Jubilados|Clubes|Espacios Culturales",
             "CULTO": "Espacios de Culto",
             "CCAA": "Local comercial",
             "CULTURA": "Espacios Culturales",

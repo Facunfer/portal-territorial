@@ -341,8 +341,6 @@ def _tiene_permiso_modulo_asoc(user: dict) -> bool:
     permitidos = {
         "MASTER",
         "REFERENTE", "REFERENTE_MASTER", "REFERENTE_EXTRACTO",
-        "ASOCIACIONES_CIVILES", "ASOCIACIONES_CIVILES_MASTER", "ASOCIACIONES_CIVILES_EXTRACTO",
-        "CENTROS_COMERCIALES", "CENTROS_COMERCIALES_MASTER", "CENTROS_COMERCIALES_EXTRACTO",
         "CULTO", "CULTO_MASTER", "CULTO_EXTRACTO",
     }
     return t in permitidos
