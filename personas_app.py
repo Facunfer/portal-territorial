@@ -1050,7 +1050,7 @@ def personas_screen():
 
     # 1. KPIs
     with st.container(border=True):
-        c1, c2, c3, c4, c5, c6, c7 = st.columns([1.3, 1.0, 1.15, 1.0, 1.1, 1.2, 1.5])
+        c1, c2, c3, c4, c5, c6, c7 = st.columns([1.3, 1.0, 1.15, 1.0, 1.4, 1.2, 1.5])
         with c1:
             st.metric("Personas", k_total)
         with c2:
@@ -1060,7 +1060,7 @@ def personas_screen():
         with c4:
             st.metric("🔴 >60", k_60)
         with c5:
-            st.metric("⚫ Sin", k_sin)
+            st.metric("⚫ Sin contacto", k_sin)
         with c6:
             st.button("🧹 Limpiar filtros", use_container_width=True, on_click=_limpiar_filtros)
         with c7:

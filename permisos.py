@@ -8,11 +8,15 @@ from typing import List, Optional, Dict, Any
 # =========================
 # Constantes
 # =========================
-AMBITOS = ["GLOBAL", "COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
+AMBITOS = ["GLOBAL", "COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES", "SEGMENTOS"]
 ROLES = ["CABEZA", "MASTER", "EXTRACTO"]
 
-VERT_PERSONAS = ["JUVENTUD", "GENERACION_PLATEADA", "MIGRANTES", "PROFESIONALES"]
-VERT_ASOC = ["ASOCIACIONES_CIVILES", "CENTROS_COMERCIALES", "CULTO"]
+VERT_PERSONAS = [
+    "JUVENTUD", "GENERACION_PLATEADA", "MIGRANTES", "PROFESIONALES",
+    "CCAA", "PYMES", "JOVENES_EMPRESARIOS", "EDUCACION", "SALUD", "CULTURA",
+    "CULTO",
+]
+VERT_ASOC = ["ASOCIACIONES_CIVILES", "CULTO", "CCAA", "CULTURA"]
 
 
 def _up(s: Optional[str]) -> str:
@@ -57,12 +61,24 @@ def is_comuna_user(user: dict) -> bool:
     return get_ambito(user) == "COMUNA"
 
 
+def is_segmentos(user: dict) -> bool:
+    return get_ambito(user) == "SEGMENTOS"
+
+
 def is_vertical_personas(user: dict) -> bool:
-    return get_ambito(user) == "VERTICAL_PERSONAS" and get_vertical(user) in VERT_PERSONAS
+    amb = get_ambito(user)
+    vert = get_vertical(user)
+    if amb in ["VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"] and vert in VERT_PERSONAS:
+        return True
+    return False
 
 
 def is_vertical_asoc(user: dict) -> bool:
-    return get_ambito(user) == "VERTICAL_ASOCIACIONES" and get_vertical(user) in VERT_ASOC
+    amb = get_ambito(user)
+    vert = get_vertical(user)
+    if amb in ["VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"] and vert in VERT_ASOC:
+        return True
+    return False
 
 
 # =========================
@@ -86,7 +102,12 @@ def personas_scope(user: dict) -> Scope:
             "MIGRANTES": "MIGRANTE",
             "PROFESIONALES": "PROFESIONAL",
             "CULTO": "CULTO",
-            "CENTROS_COMERCIALES": "PYME|COMERCIANTE",
+            "CCAA": "COMERCIANTE",
+            "PYMES": "PYME",
+            "JOVENES_EMPRESARIOS": "EMPRENDEDOR",
+            "EDUCACION": "EDUCACIÓN",
+            "SALUD": "SALUD",
+            "CULTURA": "CULTURA",
         }
         return Scope(kind="TAG", value=tag_map.get(get_vertical(user)))
 
@@ -115,7 +136,8 @@ def asociaciones_scope(user: dict) -> Scope:
         tipo_map = {
             "ASOCIACIONES_CIVILES": "Centros de Jubilados|Clubes|Espacios Culturales",
             "CULTO": "Espacios de Culto",
-            "CENTROS_COMERCIALES": "Local comercial",
+            "CCAA": "Local comercial",
+            "CULTURA": "Espacios Culturales",
         }
         return Scope(kind="ASOC_TIPO", value=tipo_map.get(v))
 
@@ -165,24 +187,31 @@ def allowed_modules(user: dict) -> List[str]:
     amb = get_ambito(user)
     rol = get_rol(user)
     
+    # SEGMENTOS: solo Reuniones/Actividades y Mapa Relacionamiento
+    if amb == "SEGMENTOS":
+        return ["Reuniones/Actividades", "Mapa Relacionamiento"]
+    
     # 1. Módulos base por ámbito
     if amb == "GLOBAL":
         out = ["Personas", "Asociaciones", "Master Global"]
     elif amb == "COMUNA":
         out = ["Personas", "Asociaciones"]
-    elif amb == "VERTICAL_PERSONAS":
-        out = ["Personas"]
-    elif amb == "VERTICAL_ASOCIACIONES":
-        out = ["Asociaciones"]
-        # Especial: CULTO y CENTROS_COMERCIALES ven Personas también (por tags)
-        if get_vertical(user) in ["CULTO", "CENTROS_COMERCIALES"]:
+    elif amb in ["VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]:
+        out = []
+        vert = get_vertical(user)
+        if vert in VERT_PERSONAS:
             out.append("Personas")
+        if vert in VERT_ASOC:
+            out.append("Asociaciones")
     else:
         out = ["Personas", "Asociaciones"]
 
-    # 2. Agregar 'Reuniones', 'Visualización' e 'Consulta' para roles Master/Cabeza
+    # 2. Agregar 'Reuniones/Actividades', 'Visualización' e 'Consulta' para roles Master/Cabeza
     if rol in ["MASTER", "CABEZA"]:
-        out.append("Reuniones")
+        out.append("Reuniones/Actividades")
+        # Mapa Relacionamiento SOLO para verticales
+        if amb in ["VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]:
+            out.append("Mapa Relacionamiento")
         
         # EXCEPCION: GLOBAL MASTER ya tiene su dashboard unificado, no necesita IA ni Visualización
         if not is_global_master(user):

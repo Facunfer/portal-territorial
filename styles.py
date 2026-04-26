@@ -30,34 +30,90 @@ def load_css():
         }
 
         /* =========================================
-           SIDEBAR
+           SIDEBAR — Fondo
            ========================================= */
-        [data-testid="stSidebar"] {
+        [data-testid="stSidebar"],
+        [data-testid="stSidebar"] > div,
+        [data-testid="stSidebar"] > div:first-child {
             background-color: #371959 !important;
         }
-        
-        /* Texto genérico en sidebar */
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p, 
-        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] span,
-        [data-testid="stSidebar"] label {
+
+        /* =========================================
+           SIDEBAR — TODO el texto en blanco
+           Selectores amplios para cubrir cualquier
+           versión de Streamlit en producción
+           ========================================= */
+
+        /* Markdown: párrafos, spans, strong, em */
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] span,
+        [data-testid="stSidebar"] strong,
+        [data-testid="stSidebar"] em,
+        [data-testid="stSidebar"] small,
+        [data-testid="stSidebar"] a {
             color: #FFFFFF !important;
         }
-        
+
+        /* Labels de widgets (caption, text_input, selectbox, etc.) */
+        [data-testid="stSidebar"] label,
+        [data-testid="stSidebar"] .stCaption,
+        [data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+        [data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
+            color: #FFFFFF !important;
+        }
+
+        /* stMarkdownContainer (usado por st.markdown y st.caption) */
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+        [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] * {
+            color: #FFFFFF !important;
+        }
+
+        /* Radio buttons: texto de cada opción */
+        [data-testid="stSidebar"] [data-baseweb="radio"] div,
+        [data-testid="stSidebar"] [data-baseweb="radio"] p,
+        [data-testid="stSidebar"] [data-baseweb="radio"] span,
+        [data-testid="stSidebar"] [data-testid="stRadio"] label,
+        [data-testid="stSidebar"] [data-testid="stRadio"] p {
+            color: #FFFFFF !important;
+        }
+
+        /* Título del radio group */
+        [data-testid="stSidebar"] [data-testid="stRadio"] > label {
+            color: #A6E3FF !important;
+            font-weight: 700 !important;
+            text-transform: uppercase;
+            font-size: 0.8rem;
+        }
+
+        /* Captura genérica: cualquier div/p dentro del sidebar */
+        [data-testid="stSidebar"] div,
+        [data-testid="stSidebar"] div p {
+            color: #FFFFFF !important;
+        }
+
         /* Separator (hr) */
         [data-testid="stSidebar"] hr {
-            border-color: #A6E3FF !important; /* Celeste LLA */
+            border-color: #A6E3FF !important;
             opacity: 0.5;
         }
-        
-        /* Radio buttons en sidebar */
-        [data-testid="stSidebar"] [data-baseweb="radio"] div {
+
+        /* Botón CERRAR SESIÓN en sidebar */
+        [data-testid="stSidebar"] .stButton > button {
+            background-color: transparent !important;
             color: #FFFFFF !important;
+            border: 1px solid #A6E3FF !important;
+            border-radius: 4px !important;
+            text-transform: uppercase;
+            font-weight: 700 !important;
+        }
+        [data-testid="stSidebar"] .stButton > button:hover {
+            background-color: #A6E3FF !important;
+            color: #371959 !important;
         }
 
         /* =========================================
            MAIN AREA
            ========================================= */
-        /* Fondo general */
         [data-testid="stAppViewContainer"] {
             background-color: #FFFFFF;
         }
@@ -65,7 +121,7 @@ def load_css():
         /* =========================================
            WIDGETS & INPUTS
            ========================================= */
-        /* Botones primarios */
+        /* Botones primarios (área principal) */
         .stButton > button {
             background-color: #371959 !important;
             color: #FFFFFF !important;
@@ -77,7 +133,7 @@ def load_css():
             transition: all 0.3s ease;
         }
         .stButton > button:hover {
-            background-color: #58337a !important; /* Un poco más claro */
+            background-color: #58337a !important;
             border-color: #58337a !important;
             color: #FFFFFF !important;
             box-shadow: 0 4px 6px rgba(0,0,0,0.2);
@@ -98,7 +154,6 @@ def load_css():
         }
         
         /* Checkboxes */
-        /* Streamlit checkboxes are tricky, simple color approach */
         [data-baseweb="checkbox"] span {
             color: #333333;
         }
@@ -110,7 +165,6 @@ def load_css():
             font-family: 'Montserrat', sans-serif !important;
             font-weight: 600 !important;
         }
-        /* Active Tab */
         button[data-baseweb="tab"][aria-selected="true"] {
             color: #371959 !important;
             border-bottom-color: #371959 !important;
@@ -119,15 +173,9 @@ def load_css():
         /* =========================================
            ALERTS / INFO / WARNING
            ========================================= */
-        /* Success box usually green, we can keep it or tweak */
         [data-testid="stNotification"] {
             border-radius: 4px;
         }
 
-        /* =========================================
-           AGGRID (If used)
-           ========================================= */
-        /* AgGrid styling is separate but we can try to influence wrappers */
-        
         </style>
     """, unsafe_allow_html=True)

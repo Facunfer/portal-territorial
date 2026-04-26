@@ -896,7 +896,7 @@ def asociaciones_screen():
     st.markdown("### 🗺️ Mapa y Gestión")
 
     with st.container(border=True):
-        a1, a2, a3, a4, a5, a6, a7 = st.columns([1.2, 1, 1, 1, 1.2, 1.2, 1.6])
+        a1, a2, a3, a4, a5, a6, a7 = st.columns([1.2, 1, 1, 1, 1.4, 1.2, 1.6])
         with a1:
             st.metric("Total", k_total)
         with a2:
@@ -906,7 +906,7 @@ def asociaciones_screen():
         with a4:
             st.metric("🔴 Neg", k_neg)
         with a5:
-            st.metric("⚫ No vis", k_nov)
+            st.metric("⚫ No visitado", k_nov)
         
         with a6:
             st.write("") # spacer

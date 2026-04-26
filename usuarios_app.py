@@ -16,11 +16,7 @@ def get_supabase() -> Client:
 # =========================
 # Constantes
 # =========================
-AMBITOS = ["GLOBAL", "COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
-ROLES = ["CABEZA", "MASTER", "EXTRACTO"]
-
-VERT_PERSONAS = ["JUVENTUD", "GENERACION_PLATEADA", "MIGRANTES", "PROFESIONALES"]
-VERT_ASOC = ["ASOCIACIONES_CIVILES", "CENTROS_COMERCIALES", "CULTO"]
+from permisos import AMBITOS, ROLES, VERT_PERSONAS, VERT_ASOC
 
 
 # =========================

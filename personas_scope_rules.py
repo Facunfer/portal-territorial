@@ -6,12 +6,19 @@ import pandas as pd
 # CONFIG / CONSTANTES
 # =========================
 VERTICAL_TAGS_MAP = {
+    # Existentes
     "CULTO": ["CULTO"],
-    "CENTROS_COMERCIALES": ["PYME", "COMERCIANTE"],
     "JUVENTUD": ["JUVENTUD", "BASES", "UNIVERSIDAD"],
     "GENERACION_PLATEADA": ["GENERACIÓN PLATEADA"],
     "MIGRANTES": ["MIGRANTE"],
     "PROFESIONALES": ["PROFESIONAL"],
+    # Nuevas
+    "CCAA": ["COMERCIANTE"],
+    "PYMES": ["PYME"],
+    "JOVENES_EMPRESARIOS": ["EMPRENDEDOR"],
+    "EDUCACION": ["EDUCACIÓN"],
+    "SALUD": ["SALUD"],
+    "CULTURA": ["CULTURA"],
 }
 
 def is_restricted_vertical(user_ctx: dict) -> bool:

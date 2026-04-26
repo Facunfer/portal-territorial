@@ -8,6 +8,7 @@ import router_asociaciones
 import usuarios_admin
 import dashboard_master_global
 import reuniones_app
+import mapa_relacionamiento_app
 import kpis_app
 import ia_app # <--- Modulo IA
 import styles  # <--- Importamos el modulo de estilos
@@ -94,14 +95,6 @@ def main():
     # Sidebar
     with st.sidebar:
         st.markdown(f"### 👤 {user.get('username','').upper()}")
-        st.caption(f"Tipo: {user.get('tipo_usuario','-')}")
-        st.caption(f"Comuna: {user.get('comuna_id','-')}")
-
-        # Debug útil (podés borrar después)
-        st.caption(f"Ámbito: {user.get('ambito','-')}")
-        st.caption(f"Vertical: {user.get('vertical','-')}")
-        st.caption(f"Rol: {user.get('rol','-')}")
-
         st.markdown("---")
 
         mods = permisos.allowed_modules(user)
@@ -133,8 +126,10 @@ def main():
         usuarios_admin.render(user)
     elif modulo == "Master Global":
         dashboard_master_global.render(user)
-    elif modulo == "Reuniones":
+    elif modulo == "Reuniones/Actividades":
         reuniones_app.render_reuniones_screen(user, get_supabase())
+    elif modulo == "Mapa Relacionamiento":
+        mapa_relacionamiento_app.render(user)
     elif modulo == "Visualización":
         kpis_app.render(user, get_supabase())
     elif modulo == "Consultas":

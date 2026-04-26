@@ -1111,7 +1111,15 @@ def render(user: dict):
                 vertical = vertical_fijo
                 st.text_input("Vertical", value=vertical, disabled=True, key="u_new_vertical_disabled")
             else:
-                vertical = st.text_input("Vertical (si aplica)", value="", key="u_new_vertical")
+                ambito_actual = (ambito or "").strip().upper()
+                if ambito_actual == "VERTICAL_PERSONAS":
+                    opciones_vertical = [""] + sorted(permisos.VERT_PERSONAS)
+                    vertical = st.selectbox("Vertical *", opciones_vertical, index=0, key="u_new_vertical")
+                elif ambito_actual == "VERTICAL_ASOCIACIONES":
+                    opciones_vertical = [""] + sorted(permisos.VERT_ASOC)
+                    vertical = st.selectbox("Vertical *", opciones_vertical, index=0, key="u_new_vertical")
+                else:
+                    vertical = None
 
             if comuna_fija is not None:
                 comuna_id = comuna_fija
