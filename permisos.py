@@ -16,7 +16,7 @@ VERT_PERSONAS = [
     "CCAA", "PYMES", "JOVENES_EMPRESARIOS", "INNOVACION_TECNOLOGIA",
     "EDUCACION", "SALUD", "CULTURA", "CULTO",
 ]
-VERT_ASOC = ["CULTO", "CCAA", "CULTURA"]
+VERT_ASOC = ["CULTO", "CCAA", "CULTURA", "CLUBES"]
 
 
 def _up(s: Optional[str]) -> str:
@@ -138,6 +138,7 @@ def asociaciones_scope(user: dict) -> Scope:
             "CULTO": "Espacios de Culto",
             "CCAA": "Local comercial",
             "CULTURA": "Espacios Culturales",
+            "CLUBES": "Clubes",
         }
         return Scope(kind="ASOC_TIPO", value=tipo_map.get(v))
 
@@ -187,9 +188,9 @@ def allowed_modules(user: dict) -> List[str]:
     amb = get_ambito(user)
     rol = get_rol(user)
     
-    # SEGMENTOS: solo Reuniones/Actividades y Mapa Relacionamiento
+    # SEGMENTOS: Reuniones/Actividades, Mapa Relacionamiento y Visualización
     if amb == "SEGMENTOS":
-        return ["Reuniones/Actividades", "Mapa Relacionamiento"]
+        return ["Reuniones/Actividades", "Mapa Relacionamiento", "Visualización"]
     
     # 1. Módulos base por ámbito
     if amb == "GLOBAL":

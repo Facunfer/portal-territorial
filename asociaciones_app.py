@@ -338,14 +338,7 @@ def _color_por_feedback(fb: str):
 # Seguridad dura: quién puede entrar
 # =========================
 def _tiene_permiso_modulo_asoc(user: dict) -> bool:
-    t = (user.get("tipo_usuario") or "").strip().upper()
-
-    permitidos = {
-        "MASTER",
-        "REFERENTE", "REFERENTE_MASTER", "REFERENTE_EXTRACTO",
-        "CULTO", "CULTO_MASTER", "CULTO_EXTRACTO",
-    }
-    return t in permitidos
+    return "Asociaciones" in allowed_modules(user)
 
 
 # =========================

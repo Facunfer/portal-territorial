@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import datetime
 import personas_scope_rules
+from constants import VERTICALES_SEGMENTOS
 
 # =========================
 # CONFIG / MAPEOS
@@ -207,6 +208,18 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
     a_query = supabase.table("asociaciones").select("id, comuna_id, tipo, nombre")
     if effective_ctx.get("ambito") == "COMUNA" and effective_ctx.get("comuna_id"):
         a_query = a_query.eq("comuna_id", int(effective_ctx["comuna_id"]))
+    elif "VERTICAL" in effective_ctx.get("ambito", ""):
+        # Filtrar solo las asociaciones del tipo correspondiente a la vertical
+        _vert_tipo_map = {
+            "CULTO": ["Espacios de Culto"],
+            "CCAA": ["Local comercial"],
+            "CULTURA": ["Espacios Culturales"],
+            "CLUBES": ["Clubes"],
+        }
+        _vert = (effective_ctx.get("vertical") or "").strip().upper()
+        _tipos = _vert_tipo_map.get(_vert, [])
+        if _tipos:
+            a_query = a_query.in_("tipo", _tipos)
     # USAR PAGINACION
     df_a = _fetch_all(a_query)
 
@@ -356,5 +369,161 @@ def render_kpis_tab(user_ctx, supabase):
                 cnt_time_a.columns = ["Recencia", "Cantidad"]
                 st.plotly_chart(px.bar(cnt_time_a, x="Recencia", y="Cantidad", title="Recencia de Visita", color="Recencia", color_discrete_map=COLOR_MAP), use_container_width=True)
 
+def render_segmentos_kpis(user_ctx, supabase):
+    """Vista de visualización exclusiva para usuarios de ámbito SEGMENTOS."""
+    st.header("📊 Visualización por Vertical")
+
+    with st.container(border=True):
+        sel_vertical = st.selectbox(
+            "Filtrar por Vertical",
+            ["Todos"] + VERTICALES_SEGMENTOS,
+            key="seg_kpi_vertical",
+        )
+
+    with st.spinner("Cargando datos..."):
+        try:
+            # ── 1. Reuniones ────────────────────────────────────────────
+            q_reun = supabase.table("reuniones").select(
+                "id, scope_tipo, scope_valor, fecha, realizada"
+            ).neq("scope_tipo", "COMUNA")
+            if sel_vertical != "Todos":
+                q_reun = q_reun.eq("scope_tipo", "VERTICAL").eq("scope_valor", sel_vertical)
+
+            res_reun = q_reun.limit(5000).execute()
+            df_reun = pd.DataFrame(res_reun.data or [])
+
+            hoy_str = str(datetime.date.today())
+            if not df_reun.empty:
+                df_realizadas = df_reun[
+                    (df_reun["realizada"] == True) |
+                    (df_reun["realizada"].isna() & (df_reun["fecha"] < hoy_str))
+                ]
+                df_programadas = df_reun[
+                    df_reun["realizada"].isna() & (df_reun["fecha"] >= hoy_str)
+                ]
+            else:
+                df_realizadas = pd.DataFrame()
+                df_programadas = pd.DataFrame()
+
+            # ── 2. Mapa de relacionamiento ───────────────────────────────
+            # Obtener IDs de usuarios de la vertical seleccionada
+            if sel_vertical != "Todos":
+                res_u = supabase.table("usuarios").select("id").eq("vertical", sel_vertical).execute()
+            else:
+                res_u = supabase.table("usuarios").select("id").in_("vertical", VERTICALES_SEGMENTOS).execute()
+
+            user_ids_vert = [r["id"] for r in (res_u.data or [])]
+
+            df_mapa = pd.DataFrame()
+            if user_ids_vert:
+                mapa_rows = []
+                _chunk_size = 200
+                for _i in range(0, len(user_ids_vert), _chunk_size):
+                    _chunk = user_ids_vert[_i:_i + _chunk_size]
+                    res_m = (
+                        supabase.table("mapa_relacionamiento")
+                        .select("id, nivel_influencia, nivel_vinculo, created_by")
+                        .in_("created_by", _chunk)
+                        .execute()
+                    )
+                    mapa_rows.extend(res_m.data or [])
+                df_mapa = pd.DataFrame(mapa_rows)
+
+        except Exception as _e:
+            st.error(f"Error al obtener datos: {_e}")
+            return
+
+    # ── KPIs resumen ────────────────────────────────────────────────────
+    inst_vinculo = 0
+    if not df_mapa.empty:
+        inst_vinculo = len(
+            df_mapa[
+                df_mapa["nivel_vinculo"].fillna("SIN CONTACTO").str.upper() != "SIN CONTACTO"
+            ]
+        )
+
+    k1, k2, k3 = st.columns(3)
+    k1.metric("✅ Reuniones Realizadas", len(df_realizadas))
+    k2.metric("📅 Reuniones Programadas", len(df_programadas))
+    k3.metric("🤝 Instituciones con Vínculo", inst_vinculo)
+
+    st.markdown("---")
+
+    # ── Gráficos de mapa de relacionamiento ────────────────────────────
+    if not df_mapa.empty:
+        g1, g2 = st.columns(2)
+        with g1:
+            inf_counts = (
+                df_mapa["nivel_influencia"]
+                .fillna("Sin datos")
+                .value_counts()
+                .reset_index()
+            )
+            inf_counts.columns = ["Nivel de Influencia", "Cantidad"]
+            st.plotly_chart(
+                px.bar(
+                    inf_counts,
+                    x="Nivel de Influencia",
+                    y="Cantidad",
+                    title="Instituciones por Nivel de Influencia",
+                    color="Nivel de Influencia",
+                    color_discrete_map={
+                        "Alto": "#10b981",
+                        "Medio": "#f59e0b",
+                        "Bajo": "#6b7280",
+                        "Sin datos": "#d1d5db",
+                    },
+                ),
+                use_container_width=True,
+            )
+        with g2:
+            vinc_counts = (
+                df_mapa["nivel_vinculo"]
+                .fillna("SIN CONTACTO")
+                .value_counts()
+                .reset_index()
+            )
+            vinc_counts.columns = ["Nivel de Vínculo", "Cantidad"]
+            st.plotly_chart(
+                px.bar(
+                    vinc_counts,
+                    x="Nivel de Vínculo",
+                    y="Cantidad",
+                    title="Instituciones por Nivel de Vínculo",
+                    color="Nivel de Vínculo",
+                    color_discrete_map={
+                        "VÍNCULO CONSOLIDADO": "#10b981",
+                        "CONTACTO INICIAL": "#f59e0b",
+                        "SIN CONTACTO": "#6b7280",
+                    },
+                ),
+                use_container_width=True,
+            )
+
+        # Tabla detallada de reuniones (expandible)
+        if not df_realizadas.empty or not df_programadas.empty:
+            st.markdown("---")
+            with st.expander("📋 Detalle de Reuniones"):
+                t1, t2 = st.tabs(["Realizadas", "Programadas"])
+                with t1:
+                    if df_realizadas.empty:
+                        st.info("Sin reuniones realizadas.")
+                    else:
+                        _cols = [c for c in ["fecha", "scope_valor", "tipo"] if c in df_realizadas.columns]
+                        st.dataframe(df_realizadas[_cols].rename(columns={"scope_valor": "Vertical", "fecha": "Fecha", "tipo": "Tipo"}), use_container_width=True, hide_index=True)
+                with t2:
+                    if df_programadas.empty:
+                        st.info("Sin reuniones programadas.")
+                    else:
+                        _cols2 = [c for c in ["fecha", "scope_valor", "tipo"] if c in df_programadas.columns]
+                        st.dataframe(df_programadas[_cols2].rename(columns={"scope_valor": "Vertical", "fecha": "Fecha", "tipo": "Tipo"}), use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay datos de relacionamiento para la selección actual.")
+
+
 def render(user_ctx, supabase):
-    render_kpis_tab(user_ctx, supabase)
+    ambito = (user_ctx.get("ambito") or "").strip().upper()
+    if ambito == "SEGMENTOS":
+        render_segmentos_kpis(user_ctx, supabase)
+    else:
+        render_kpis_tab(user_ctx, supabase)
