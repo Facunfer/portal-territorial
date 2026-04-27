@@ -374,18 +374,36 @@ def render_segmentos_kpis(user_ctx, supabase):
     st.header("📊 Visualización por Vertical")
 
     with st.container(border=True):
-        sel_vertical = st.selectbox(
-            "Filtrar por Vertical",
-            ["Todos"] + VERTICALES_SEGMENTOS,
-            key="seg_kpi_vertical",
-        )
+        fc1, fc2, fc3 = st.columns([2, 1, 1])
+        with fc1:
+            sel_vertical = st.selectbox(
+                "Filtrar por Vertical",
+                ["Todos"] + VERTICALES_SEGMENTOS,
+                key="seg_kpi_vertical",
+            )
+        with fc2:
+            fecha_desde = st.date_input(
+                "Desde",
+                value=datetime.date.today() - datetime.timedelta(days=90),
+                key="seg_kpi_desde",
+            )
+        with fc3:
+            fecha_hasta = st.date_input(
+                "Hasta",
+                value=datetime.date.today() + datetime.timedelta(days=90),
+                key="seg_kpi_hasta",
+            )
 
     with st.spinner("Cargando datos..."):
         try:
             # ── 1. Reuniones ────────────────────────────────────────────
-            q_reun = supabase.table("reuniones").select(
-                "id, scope_tipo, scope_valor, fecha, realizada"
-            ).neq("scope_tipo", "COMUNA")
+            q_reun = (
+                supabase.table("reuniones")
+                .select("id, scope_tipo, scope_valor, fecha, realizada")
+                .neq("scope_tipo", "COMUNA")
+                .gte("fecha", str(fecha_desde))
+                .lte("fecha", str(fecha_hasta))
+            )
             if sel_vertical != "Todos":
                 q_reun = q_reun.eq("scope_tipo", "VERTICAL").eq("scope_valor", sel_vertical)
 
