@@ -1,0 +1,19 @@
+[server]
+# Requerido en VPS: evita que Streamlit intente abrir un navegador
+headless = true
+# Puerto en el que corre la app (nginx hace proxy a este puerto)
+port = 8501
+# CORS lo maneja nginx, no Streamlit
+enableCORS = false
+# Protección CSRF activa
+enableXsrfProtection = true
+# Tamaño máximo de archivos subidos (CSV masivo) en MB
+maxUploadSize = 10
+
+[browser]
+# No enviar telemetría a Streamlit
+gatherUsageStats = false
+
+[runner]
+# Evita warnings de magic commands en producción
+magicEnabled = false
