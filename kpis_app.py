@@ -5,6 +5,7 @@ import plotly.express as px
 import datetime
 import personas_scope_rules
 from constants import VERTICALES_SEGMENTOS
+from db import get_supabase
 
 # =========================
 # CONFIG / MAPEOS
@@ -58,105 +59,10 @@ def _semaforo_respuesta_label(status, is_asoc=False):
 # =========================
 # HELPERS DE DATA
 # =========================
-# ... (rest of fetch_kpis_data remains unchanged, skipping to UI RENDER part where charts are) ...
 
-# ... (inside render_kpis_tab) ...
-
-    if vista_activa == "Personas":
-        st.subheader("👥 Indicadores de Personas")
-        if df_p.empty:
-            st.info("No hay datos de personas para este ámbito.")
-        else:
-            k1, k2, k3 = st.columns(3)
-            # Contactada = respuesta no nula y no contiene "NO CONTACTADO"
-            contactadas = df_p[~df_p["semaforo_respuesta"].fillna("").str.contains("NO CONTACTADO", case=False)]
-            k1.metric("Total Base", f"{len(df_p):,}")
-            k2.metric("Contactadas", f"{len(contactadas):,}")
-            k3.metric("% Penetración", f"{(len(contactadas)/len(df_p)*100):.1f}%" if not df_p.empty else "0%")
-
-            g1, g2 = st.columns(2)
-            with g1:
-                df_pie = pd.DataFrame({"Estado": ["Contactadas", "Pendientes"], "Cant": [len(contactadas), len(df_p)-len(contactadas)]})
-                st.plotly_chart(px.pie(df_pie, values="Cant", names="Estado", title="Cobertura de Base", hole=0.4, color_discrete_sequence=["#10b981", "#6b7280"]), use_container_width=True)
-            with g2:
-                if not df_ip.empty:
-                    df_time = df_ip.copy()
-                    df_time["dia"] = pd.to_datetime(df_time["fecha"]).dt.date
-                    df_counts = df_time.groupby("dia").size().reset_index(name="Interacciones")
-                    st.plotly_chart(px.line(df_counts, x="dia", y="Interacciones", title="Actividad Diaria (Cant. Interacciones)", markers=True), use_container_width=True)
-                else:
-                    st.info("Sin actividad registrada por los usuarios en este rango.")
-
-            g3, g4 = st.columns(2)
-            with g3:
-                # Reindexar para mostrar todos los estados
-                s_counts = df_p["semaforo_respuesta"].value_counts()
-                s_counts = s_counts.reindex(ORDEN_RESPUESTA_PERSONAS, fill_value=0)
-                cnt_res = s_counts.reset_index()
-                cnt_res.columns = ["Estado", "Cantidad"]
-                st.plotly_chart(px.bar(cnt_res, x="Estado", y="Cantidad", title="Clasificación por Respuesta", 
-                                       color="Estado", color_discrete_map=COLOR_MAP,
-                                       category_orders={"Estado": ORDEN_RESPUESTA_PERSONAS}), use_container_width=True)
-            with g4:
-                # Reindexar Recencia
-                t_counts = df_p["semaforo_tiempo"].value_counts()
-                t_counts = t_counts.reindex(ORDEN_TIEMPO_PERSONAS, fill_value=0)
-                cnt_time = t_counts.reset_index()
-                cnt_time.columns = ["Antigüedad", "Cantidad"]
-                st.plotly_chart(px.bar(cnt_time, x="Antigüedad", y="Cantidad", title="Recencia de Contacto", 
-                                       color="Antigüedad", color_discrete_map=COLOR_MAP,
-                                       category_orders={"Antigüedad": ORDEN_TIEMPO_PERSONAS}), use_container_width=True)
-
-    else: # Vista Asociaciones
-        st.subheader("🏢 Indicadores de Asociaciones")
-        if df_a.empty:
-            st.info("No hay asociaciones asignadas a este ámbito.")
-        else:
-            k1, k2, k3 = st.columns(3)
-            visitadas = df_a[~df_a["semaforo_respuesta"].fillna("").str.contains("NO VISITADO", case=False)]
-            # Fix metricas
-            k1.metric("Total Asociaciones", f"{len(df_a):,}")
-            k2.metric("Visitadas", f"{len(visitadas):,}")
-            k3.metric("% Cobertura", f"{(len(visitadas)/len(df_a)*100):.1f}%" if not df_a.empty else "0%")
-
-            g1, g2 = st.columns(2)
-            with g1:
-                df_pie_a = pd.DataFrame({"Estado": ["Visitadas", "Pendientes"], "Cant": [len(visitadas), len(df_a)-len(visitadas)]})
-                st.plotly_chart(px.pie(df_pie_a, values="Cant", names="Estado", title="Cobertura de Visitas", hole=0.4, color_discrete_sequence=["#10b981", "#6b7280"]), use_container_width=True)
-            with g2:
-                if not df_ia.empty:
-                    df_time_a = df_ia.copy()
-                    df_time_a["dia"] = pd.to_datetime(df_time_a["fecha"]).dt.date
-                    df_counts_a = df_time_a.groupby("dia").size().reset_index(name="Interacciones")
-                    st.plotly_chart(px.line(df_counts_a, x="dia", y="Interacciones", title="Actividad Diaria (Cant. Visitas)", markers=True), use_container_width=True)
-                else:
-                    st.info("Sin actividad registrada por los usuarios en este rango.")
-
-            g3, g4 = st.columns(2)
-            with g3:
-                # Reindexar Respuestas Asoc
-                s_counts_a = df_a["semaforo_respuesta"].value_counts()
-                s_counts_a = s_counts_a.reindex(ORDEN_RESPUESTA_ASOC, fill_value=0)
-                cnt_res_a = s_counts_a.reset_index()
-                cnt_res_a.columns = ["Resultado", "Cantidad"]
-                st.plotly_chart(px.bar(cnt_res_a, x="Resultado", y="Cantidad", title="Resultados de Visitas", 
-                                       color="Resultado", color_discrete_map=COLOR_MAP,
-                                       category_orders={"Resultado": ORDEN_RESPUESTA_ASOC}), use_container_width=True)
-            with g4:
-                # Reindexar Recencia Asoc
-                t_counts_a = df_a["semaforo_tiempo"].value_counts()
-                t_counts_a = t_counts_a.reindex(ORDEN_TIEMPO_ASOC, fill_value=0)
-                cnt_time_a = t_counts_a.reset_index()
-                cnt_time_a.columns = ["Recencia", "Cantidad"]
-                st.plotly_chart(px.bar(cnt_time_a, x="Recencia", y="Cantidad", title="Recencia de Visita", 
-                                       color="Recencia", color_discrete_map=COLOR_MAP,
-                                       category_orders={"Recencia": ORDEN_TIEMPO_ASOC}), use_container_width=True)
-
-# =========================
-# HELPERS DE DATA
-# =========================
-
-def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None):
+@st.cache_data(ttl=300)
+def fetch_kpis_data(user_ctx, date_from, date_to, scope_override=None):
+    supabase = get_supabase()
     """
     Trae los datos necesarios para KPIs respetando el scope, filtrando por usuarios y calculando semáforos.
     """
@@ -170,6 +76,11 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
             effective_ctx["vertical"] = scope_override["vertical"]
             effective_ctx["ambito"] = "VERTICAL_PERSONAS"
             effective_ctx["rol"] = "CABEZA"
+
+    is_clubes_kpis = (
+        (effective_ctx.get("ambito") or "").strip().upper() == "VERTICAL_ASOCIACIONES"
+        and (effective_ctx.get("vertical") or "").strip().upper() == "CLUBES"
+    )
 
     # Helper para paginación genérica
     def _fetch_all(query):
@@ -199,10 +110,14 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
     user_ids = [r["id"] for r in (res_u.data or [])]
 
     # 2. Fetch Personas (Filtrado por visibilidad)
-    p_query = supabase.table("personas").select("id, comuna_id, tags, creado_en")
-    p_query = personas_scope_rules.apply_personas_visibility_filter(p_query, effective_ctx)
-    # USAR PAGINACION
-    df_p = _fetch_all(p_query)
+    if is_clubes_kpis:
+        # CLUBES no muestra metricas de personas; se evita traer datos fuera de su vertical de asociaciones.
+        df_p = pd.DataFrame()
+    else:
+        p_query = supabase.table("personas").select("id, comuna_id, tags, creado_en")
+        p_query = personas_scope_rules.apply_personas_visibility_filter(p_query, effective_ctx)
+        # USAR PAGINACION
+        df_p = _fetch_all(p_query)
     
     # 3. Fetch Asociaciones
     a_query = supabase.table("asociaciones").select("id, comuna_id, tipo, nombre")
@@ -214,7 +129,7 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
             "CULTO": ["Espacios de Culto"],
             "CCAA": ["Local comercial"],
             "CULTURA": ["Espacios Culturales"],
-            "CLUBES": ["Clubes"],
+            "CLUBES": ["Clubes"],  # CLUBES conserva el tipo valido existente sin tocar constants.py.
         }
         _vert = (effective_ctx.get("vertical") or "").strip().upper()
         _tipos = _vert_tipo_map.get(_vert, [])
@@ -239,7 +154,7 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
             page += 1
         return pd.DataFrame(rows)
 
-    df_ip_raw = fetch_paged("interacciones_personas", "persona_id")
+    df_ip_raw = pd.DataFrame() if is_clubes_kpis else fetch_paged("interacciones_personas", "persona_id")
     df_ia_raw = fetch_paged("interacciones_asociaciones", "asociacion_id")
     
     # Filtrar interacciones por los Usuarios del ámbito (Pedido crítico)
@@ -248,6 +163,14 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
             df_ip_raw = df_ip_raw[df_ip_raw["created_by"].isin(user_ids)]
         if not df_ia_raw.empty:
             df_ia_raw = df_ia_raw[df_ia_raw["created_by"].isin(user_ids)]
+
+    if is_clubes_kpis and not df_ia_raw.empty:
+        # CLUBES solo debe contar interacciones de asociaciones visibles con tipo="Clubes".
+        if df_a.empty or "id" not in df_a.columns:
+            df_ia_raw = df_ia_raw.iloc[0:0]
+        else:
+            visible_asoc_ids = set(df_a["id"].dropna().astype(str))
+            df_ia_raw = df_ia_raw[df_ia_raw["asociacion_id"].astype(str).isin(visible_asoc_ids)]
 
     # 5. Calcular Semáforos
     today_ts = pd.Timestamp.now().normalize()
@@ -278,13 +201,22 @@ def fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override=None)
 
 def render_kpis_tab(user_ctx, supabase):
     st.header("📈 Visualización / KPIs")
+    is_clubes_kpis = (
+        (user_ctx.get("ambito") or "").strip().upper() == "VERTICAL_ASOCIACIONES"
+        and (user_ctx.get("vertical") or "").strip().upper() == "CLUBES"
+    )
     
     # --- FILTROS GLOBALES ---
     with st.container(border=True):
         c1, c2 = st.columns([1, 1])
         with c1:
-            # Selector de Vista Principal
-            vista_activa = st.radio("Seleccionar Información:", ["Personas", "Asociaciones"], horizontal=True)
+            if is_clubes_kpis:
+                # CLUBES solo visualiza asociaciones tipo "Clubes"; no se ofrece la vista Personas.
+                vista_activa = "Asociaciones"
+                st.selectbox("Seleccionar Información:", ["Asociaciones"], index=0, disabled=True)
+            else:
+                # Selector de Vista Principal
+                vista_activa = st.radio("Seleccionar Información:", ["Personas", "Asociaciones"], horizontal=True)
         with c2:
             rango = st.date_input("Rango de análisis (Actividad)", 
                                   value=(datetime.date.today() - datetime.timedelta(days=30), datetime.date.today()))
@@ -295,7 +227,7 @@ def render_kpis_tab(user_ctx, supabase):
     # Fetch Data
     with st.spinner("Cargando analíticas..."):
         try:
-            df_p, df_a, df_ip, df_ia = fetch_kpis_data(supabase, user_ctx, date_from, date_to, scope_override)
+            df_p, df_a, df_ip, df_ia = fetch_kpis_data(user_ctx, date_from, date_to, scope_override or None)
         except Exception as e:
             st.error(f"Error al obtener datos: {e}")
             return

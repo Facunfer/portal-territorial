@@ -27,6 +27,7 @@ VERTICAL_ASOC_TIPO_MAP = {
     "CCAA": ["Local comercial"],
     "CULTO": ["Espacios de Culto"],
     "CULTURA": ["Espacios Culturales"],
+    "CLUBES": ["Clubes"],  # CLUBES puede seleccionar instituciones existentes del tipo asociativo Clubes.
 }
 
 # Mapeo inverso: tipo de asociación → vertical
@@ -43,7 +44,43 @@ def _get_user_vertical_map() -> dict:
     supabase = get_supabase()
     res = supabase.table("usuarios").select("id, vertical").execute()
     return {
-        r["id"]: (r.get("vertical") or "").strip().upper()
+        _normalize_user_id(r["id"]): (r.get("vertical") or "").strip().upper()
+        for r in (res.data or [])
+        if r.get("id") is not None
+    }
+
+
+def _normalize_user_id(value):
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        number = float(text)
+        if number.is_integer():
+            return int(number)
+    except Exception:
+        pass
+    return text
+
+
+def _get_user_vertical_map_for_ids(supabase, created_by_ids) -> dict:
+    # Scope vertical del mapa: resuelve verticales con una sola query sobre los created_by visibles.
+    ids = []
+    seen = set()
+    for raw_id in created_by_ids:
+        user_id = _normalize_user_id(raw_id)
+        if user_id is not None and user_id not in seen:
+            seen.add(user_id)
+            ids.append(user_id)
+
+    if not ids:
+        return {}
+
+    res = supabase.table("usuarios").select("id, vertical").in_("id", ids).execute()
+    return {
+        _normalize_user_id(r.get("id")): (r.get("vertical") or "").strip().upper()
         for r in (res.data or [])
         if r.get("id") is not None
     }
@@ -126,6 +163,14 @@ def _color_por_vinculo(nivel_vinculo: str) -> str:
         return "orange"
     return "gray"  # SIN CONTACTO o desconocido
 
+
+def _display_institucion(institucion) -> str:
+    # Display global: evita mostrar vacios/NULL como texto roto sin cambiar el valor almacenado.
+    if institucion is None or pd.isna(institucion):
+        return "Sin institución"
+    inst = str(institucion).strip()
+    return inst if inst else "Sin institución"
+
 # =========================
 # Data Load
 # =========================
@@ -164,6 +209,27 @@ def get_mapa_relacionamiento(user):
             "nivel_vinculo", "comuna_id", "direccion", "latitud", "longitud",
             "observaciones", "created_by", "created_at", "ultima_fecha", "Semaforo"
         ])
+
+    vertical_usuario = (user.get("vertical") or "").strip().upper()
+    debe_filtrar_vertical = (
+        ambito in ["VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
+        and vertical_usuario
+    )
+    if debe_filtrar_vertical:
+        # Usuarios verticales: capa adicional posterior al scope previo; usuarios eliminados no matchean.
+        user_vertical_map = _get_user_vertical_map_for_ids(supabase, df["created_by"].dropna().tolist())
+        df["created_by_vertical"] = df["created_by"].apply(
+            lambda uid: user_vertical_map.get(_normalize_user_id(uid), "")
+        )
+        df = df[df["created_by_vertical"] == vertical_usuario].copy()
+        df.drop(columns=["created_by_vertical"], inplace=True, errors="ignore")
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "id", "institucion", "nombre_apellido", "rol", "telefono", "nivel_influencia",
+                "nivel_vinculo", "comuna_id", "direccion", "latitud", "longitud",
+                "observaciones", "created_by", "created_at", "ultima_fecha", "Semaforo"
+            ])
 
     contacto_ids = df["id"].tolist()
     
@@ -253,6 +319,9 @@ def render(user: dict):
     supabase = get_supabase()
 
     kind = st.session_state.get("PERM_PERSONAS_SCOPE_KIND", "ALL").strip().upper()
+    session_user = st.session_state.get("user") or user or {}
+    # Rol CABEZA: unico caso donde institucion deja de ser obligatoria en alta manual y CSV.
+    es_rol_cabeza = (session_user.get("rol") or "").strip().upper() == "CABEZA"
 
     # Session State
     if "rel_show_new" not in st.session_state:
@@ -320,7 +389,7 @@ def render(user: dict):
                         st.caption(f"📍 Dirección asociada: {dir_autocompletada}")
             else:
                 institucion_seleccionada = st.text_input(
-                    "Nombre de la nueva institución *",
+                    "Nombre de la nueva institución" if es_rol_cabeza else "Nombre de la nueva institución *",
                     value="",
                     key="rel_inst_nueva"
                 )
@@ -337,7 +406,8 @@ def render(user: dict):
                 if instituciones_dict:
                     st.text_input("Institución", value=institucion_seleccionada or "", disabled=True, key="rel_inst_display")
                 else:
-                    institucion_seleccionada = st.text_input("Institución *", key="rel_inst")
+                    # Rol CABEZA: el campo sigue visible, pero sin asterisco porque puede quedar vacio.
+                    institucion_seleccionada = st.text_input("Institución" if es_rol_cabeza else "Institución *", key="rel_inst")
                 
                 nombre_apellido = st.text_input("Nombre y Apellido *", key="rel_nom")
                 rol = st.text_input("Rol / Cargo", key="rel_rol")
@@ -376,7 +446,8 @@ def render(user: dict):
         
         if submitted:
             inst_final = (institucion_seleccionada or "").strip()
-            if not inst_final:
+            # Roles distintos a CABEZA mantienen intacta la validacion obligatoria de institucion.
+            if not es_rol_cabeza and not inst_final:
                 st.error("Debes seleccionar o ingresar una institución.")
             else:
                 # Si la dirección viene autocompletada Y no fue modificada, usar las coordenadas originales
@@ -397,7 +468,7 @@ def render(user: dict):
                         lat_final, lon_final = geocodificar_con_reintentos(dom_normalizado)
                 
                 data_insert = {
-                    "institucion": inst_final,
+                    "institucion": inst_final or None,
                     "nombre_apellido": nombre_apellido.strip(),
                     "rol": rol.strip(),
                     "telefono": telefono.strip() if telefono else None,
@@ -456,9 +527,10 @@ def render(user: dict):
                         "NIVEL DE VÍNCULO ACTUAL": "nivel_vinculo",  # Con tilde también
                     }
                     
-                    # Verificar que las columnas mínimas existan
+                    # Rol CABEZA: se filtra solo INSTITUCION en runtime; el resto de obligatorios no cambia.
                     required = ["INSTITUCION", "NOMBRE Y APELLIDO"]
-                    missing = [r for r in required if r not in df_csv.columns]
+                    required_runtime = [r for r in required if not (es_rol_cabeza and r == "INSTITUCION")]
+                    missing = [r for r in required_runtime if r not in df_csv.columns]
                     if missing:
                         st.error(f"Faltan columnas requeridas en el CSV: {', '.join(missing)}")
                     else:
@@ -467,7 +539,12 @@ def render(user: dict):
                         
                         for idx, row in df_csv.iterrows():
                             try:
-                                inst = str(row.get("INSTITUCION", "")).strip() if pd.notna(row.get("INSTITUCION")) else "Sin Nombre"
+                                # Rol CABEZA: INSTITUCION puede venir ausente/vacia; otros roles conservan el fallback previo.
+                                inst_raw = row.get("INSTITUCION") if "INSTITUCION" in df_csv.columns else None
+                                if es_rol_cabeza:
+                                    inst = str(inst_raw).strip() if pd.notna(inst_raw) else ""
+                                else:
+                                    inst = str(inst_raw).strip() if pd.notna(inst_raw) else "Sin Nombre"
                                 nom = str(row.get("NOMBRE Y APELLIDO", "")).strip() if pd.notna(row.get("NOMBRE Y APELLIDO")) else ""
                                 rol_txt = str(row.get("ROL", "")).strip() if "ROL" in df_csv.columns and pd.notna(row.get("ROL")) else ""
                                 
@@ -484,7 +561,7 @@ def render(user: dict):
                                 vinc = normalizar_nivel_vinculo(vinc_raw) if pd.notna(vinc_raw) else "SIN CONTACTO"
                                 
                                 ins_data = {
-                                    "institucion": inst,
+                                    "institucion": (inst or None) if es_rol_cabeza else inst,
                                     "nombre_apellido": nom,
                                     "rol": rol_txt,
                                     "telefono": tel,
@@ -524,8 +601,11 @@ def render(user: dict):
     if es_segmentos and not df.empty:
         user_vert_map = _get_user_vertical_map()
         df["Segmento"] = df["created_by"].apply(
-            lambda x: user_vert_map.get(x, "") if x is not None else ""
+            lambda x: user_vert_map.get(_normalize_user_id(x), "") if x is not None else ""
         )
+
+    # Display global: filtros, tabla, mapa y ficha muestran fallback sin modificar el dato real.
+    df["institucion_display"] = df["institucion"].apply(_display_institucion)
 
     # Inicializar filtros
     if "flt_rel_inst" not in st.session_state: st.session_state["flt_rel_inst"] = "Todas"
@@ -549,7 +629,8 @@ def render(user: dict):
     with st.expander("🔍 Buscador y Filtros", expanded=True):
         c1, c2, c3, c4, c5 = st.columns(5)
 
-        list_inst = ["Todas"] + sorted(df["institucion"].dropna().unique().tolist())
+        # Filtro visual global: incluye vacios/NULL como "Sin institución" para todos los roles.
+        list_inst = ["Todas"] + sorted(df["institucion_display"].dropna().unique().tolist())
 
         with c1:
             st.selectbox("Institución", list_inst, key="flt_rel_inst")
@@ -576,7 +657,7 @@ def render(user: dict):
     # Aplico Filtros
     df_f = df.copy()
     if st.session_state["flt_rel_inst"] != "Todas":
-        df_f = df_f[df_f["institucion"] == st.session_state["flt_rel_inst"]]
+        df_f = df_f[df_f["institucion_display"] == st.session_state["flt_rel_inst"]]
     if st.session_state["flt_rel_inf"] != "Todos":
         df_f = df_f[df_f["nivel_influencia"] == st.session_state["flt_rel_inf"]]
     if st.session_state["flt_rel_vinc"] != "Todos":
@@ -591,7 +672,7 @@ def render(user: dict):
     txt = st.session_state["flt_rel_txt"].strip().lower()
     if txt:
         mask = (
-            df_f["institucion"].astype(str).str.lower().str.contains(txt) |
+            df_f["institucion_display"].astype(str).str.lower().str.contains(txt) |
             df_f["nombre_apellido"].astype(str).str.lower().str.contains(txt) |
             df_f["rol"].astype(str).str.lower().str.contains(txt)
         )
@@ -634,7 +715,8 @@ def render(user: dict):
         with kv4:
             st.write("") # Spacer vertical
             if not df_f.empty:
-                csv_export = df_f.to_csv(index=False).encode('utf-8')
+                # Export: no persiste la columna auxiliar de display usada solo para render.
+                csv_export = df_f.drop(columns=["institucion_display"], errors="ignore").to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Exportar Data (CSV)",
                     data=csv_export,
@@ -671,6 +753,8 @@ def render(user: dict):
         if not HAS_FOLIUM:
             # Fallback: mapa básico de Streamlit
             df_map_plot = df_map.rename(columns={"latitud": "lat", "longitud": "lon"})
+            # Fallback st.map: normaliza institucion aunque el widget use solo coordenadas.
+            df_map_plot["institucion"] = df_map_plot["institucion"].apply(_display_institucion)
             st.map(df_map_plot[["lat", "lon"]])
         else:
             # Mapa interactivo con Folium
@@ -683,7 +767,8 @@ def render(user: dict):
             m = folium.Map(location=[center_lat, center_lon], zoom_start=12, control_scale=True)
             
             for _, row in df_map.iterrows():
-                institucion = (row.get("institucion") or "").strip()
+                # Tooltip Folium: aplica fallback por registro para vacios/NULL.
+                institucion = _display_institucion(row.get("institucion"))
                 nombre = (row.get("nombre_apellido") or "").strip()
                 rol_txt = (row.get("rol") or "").strip()
                 telefono = (row.get("telefono") or "").strip()
@@ -732,6 +817,8 @@ def render(user: dict):
         "nivel_vinculo", "ultima_fecha", "Semaforo", "comuna_id", "direccion", "observaciones"
     ]
     df_grid = df_f[cols_to_show].copy() if not df_f.empty else pd.DataFrame(columns=cols_to_show)
+    # Tabla AgGrid: muestra fallback de institucion para todos los roles sin alterar df_f/raw.
+    df_grid["institucion"] = df_grid["institucion"].apply(_display_institucion)
 
     gb = GridOptionsBuilder.from_dataframe(df_grid)
     gb.configure_selection(selection_mode="single", use_checkbox=False)
@@ -792,9 +879,11 @@ def render(user: dict):
             return
             
         row_db = db_matches.iloc[0]
+        # Ficha: encabezado legible cuando institucion viene NULL/vacia.
+        institucion_titulo = _display_institucion(row_db.get("institucion"))
         
         st.markdown("---")
-        st.markdown(f"### 📌 Ficha: {row_db.get('nombre_apellido', '')} — {row_db.get('institucion', '')}")
+        st.markdown(f"### 📌 Ficha: {row_db.get('nombre_apellido', '')} — {institucion_titulo}")
         
         # Info rápida
         col_info1, col_info2, col_info3, col_info4 = st.columns(4)

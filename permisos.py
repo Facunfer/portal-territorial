@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any
 # =========================
 # Constantes
 # =========================
-AMBITOS = ["GLOBAL", "COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES", "SEGMENTOS"]
+AMBITOS = ["GLOBAL", "COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES", "SEGMENTOS", "AGENDA"]
 ROLES = ["CABEZA", "MASTER", "EXTRACTO"]
 
 VERT_PERSONAS = [
@@ -16,7 +16,7 @@ VERT_PERSONAS = [
     "CCAA", "PYMES", "JOVENES_EMPRESARIOS", "INNOVACION_TECNOLOGIA",
     "EDUCACION", "SALUD", "CULTURA", "CULTO",
 ]
-VERT_ASOC = ["CULTO", "CCAA", "CULTURA", "CLUBES"]
+VERT_ASOC = ["CULTO", "CCAA", "CULTURA", "CLUBES"]  # CLUBES usa el scope ASOC_TIPO con tipo="Clubes".
 
 
 def _up(s: Optional[str]) -> str:
@@ -33,6 +33,7 @@ class Scope:
     - kind="ASOC_TIPO"      -> filtrar asociaciones por tipo (value: string con "|" )
     - kind="USERS_VERTICAL" -> filtrar usuarios por (ambito+vertical)
     - kind="ASSIGNED"       -> ver solo lo asignado (usuarios_asignaciones)
+    - kind="NONE"           -> sin acceso a datos de ese modulo
     """
     kind: str
     value: Optional[str] = None
@@ -65,6 +66,10 @@ def is_segmentos(user: dict) -> bool:
     return get_ambito(user) == "SEGMENTOS"
 
 
+def is_agenda_user(user: dict) -> bool:
+    return get_ambito(user) == "AGENDA"
+
+
 def is_vertical_personas(user: dict) -> bool:
     amb = get_ambito(user)
     vert = get_vertical(user)
@@ -85,6 +90,10 @@ def is_vertical_asoc(user: dict) -> bool:
 # Scopes por módulo
 # =========================
 def personas_scope(user: dict) -> Scope:
+    if is_agenda_user(user):
+        # AGENDA no tiene acceso ni scope sobre personas; sus modulos son solo de reuniones.
+        return Scope(kind="NONE")
+
     # EXTRACTO: siempre ve SOLO lo asignado (independiente del ámbito)
     if get_rol(user) == "EXTRACTO":
         return Scope(kind="ASSIGNED")
@@ -121,7 +130,12 @@ def asociaciones_scope(user: dict) -> Scope:
       - CULTO  -> Espacios de Culto
       - CCAA   -> Local comercial
       - CULTURA -> Espacios Culturales
+      - CLUBES -> Clubes
     """
+    if is_agenda_user(user):
+        # AGENDA no tiene acceso ni scope sobre asociaciones; ve reuniones globales read-only.
+        return Scope(kind="NONE")
+
     # EXTRACTO: siempre ve SOLO lo asignado (independiente del ámbito)
     if get_rol(user) == "EXTRACTO":
         return Scope(kind="ASSIGNED")
@@ -151,6 +165,10 @@ def users_scope(user: dict) -> Scope:
     - COMUNA: ve usuarios con comuna_id = la suya
     - VERTICAL_*: ve usuarios con (ambito igual) y (vertical igual)
     """
+    if is_agenda_user(user):
+        # AGENDA no administra usuarios, por eso no recibe scope administrativo.
+        return Scope(kind="NONE")
+
     if is_global_master(user):
         return Scope(kind="ALL")
 
@@ -172,12 +190,20 @@ def can_manage_users(user: dict) -> bool:
     """
     Quién puede administrar usuarios:
     - GLOBAL MASTER: sí (todo)
-    - CABEZA: sí (su ámbito)
-    - MASTER: sí (su ámbito)
+    - CABEZA/MASTER de COMUNA o VERTICAL: sí solo si es_original=True
     - EXTRACTO: no
     """
+    if is_agenda_user(user):
+        # AGENDA es EXTRACTO read-only y nunca ve el modulo Usuarios.
+        return False
+
     if is_global_master(user):
         return True
+
+    if get_ambito(user) in ["COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]:
+        # Usuarios creados por otros masters/cabezas no heredan administracion de usuarios.
+        return get_rol(user) in ["CABEZA", "MASTER"] and bool(user.get("es_original", False))
+
     return get_rol(user) in ["CABEZA", "MASTER"]
 
 
@@ -187,6 +213,10 @@ def allowed_modules(user: dict) -> List[str]:
     """
     amb = get_ambito(user)
     rol = get_rol(user)
+
+    if amb == "AGENDA":
+        # AGENDA tiene sidebar aislado: solo consulta y visualizacion read-only de reuniones.
+        return ["Agenda de Reuniones", "Visualización de Reuniones"]
     
     # SEGMENTOS: Reuniones/Actividades, Mapa Relacionamiento y Visualización
     if amb == "SEGMENTOS":
@@ -235,6 +265,16 @@ def creatable_roles(user: dict) -> Dict[str, Any]:
       - roles_permitidos: lista de roles asignables al nuevo usuario
       - tipo_usuario_fijo: str o None
     """
+    if is_agenda_user(user):
+        # AGENDA no puede crear usuarios desde el sistema.
+        return {
+            "ambito_fijo": None,
+            "vertical_fijo": None,
+            "comuna_fija": None,
+            "roles_permitidos": [],
+            "tipo_usuario_fijo": None,
+        }
+
     if is_global_master(user):
         return {
             "ambito_fijo": None,

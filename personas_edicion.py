@@ -419,6 +419,14 @@ def insert_interaccion(payload: dict):
     supabase.table("interacciones_personas").insert(payload).execute()
 
 
+def insert_interacciones_bulk(payloads: list):
+    """Inserta múltiples interacciones en una sola llamada a la base de datos."""
+    if not payloads:
+        return
+    supabase = get_supabase()
+    supabase.table("interacciones_personas").insert(payloads).execute()
+
+
 def get_users_same_comuna(user):
     supabase = get_supabase()
     res = (
@@ -456,6 +464,7 @@ def cerrar_seguimiento(seguimiento_id: int):
     supabase.table("seguimientos_personas").update({"estado": "hecho"}).eq("id", int(seguimiento_id)).execute()
 
 
+@st.cache_data(ttl=300)
 def get_usuarios_mapping():
     """Retorna un dict {id: username} de todos los usuarios para mostrar en el historial."""
     supabase = get_supabase()

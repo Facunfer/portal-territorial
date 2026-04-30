@@ -9,6 +9,8 @@ import router_asociaciones
 import usuarios_admin
 import dashboard_master_global
 import reuniones_app
+import agenda_reuniones_app
+import agenda_kpis_app
 import mapa_relacionamiento_app
 import kpis_app
 import ia_app # <--- Modulo IA
@@ -17,17 +19,34 @@ import styles  # <--- Importamos el modulo de estilos
 # =========================
 # Auth
 # =========================
-def get_user(username: str, password: str):
+def _is_missing_es_original_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return "es_original" in msg and ("schema cache" in msg or "does not exist" in msg or "column" in msg)
+
+
+def _query_user(username: str, password: str, cols: str):
     supabase = get_supabase()
-    res = (
+    return (
         supabase.table("usuarios")
-        .select("id, username, tipo_usuario, comuna_id, ambito, vertical, rol")
+        .select(cols)
         .eq("username", username)
         .eq("password_hash", password)
         .eq("activo", True)
         .limit(1)
         .execute()
     )
+
+
+def get_user(username: str, password: str):
+    cols_base = "id, username, tipo_usuario, comuna_id, ambito, vertical, rol"
+    try:
+        # es_original restringe Usuarios para COMUNA/VERTICAL; si falta la columna, reintentamos seguro.
+        res = _query_user(username, password, f"{cols_base}, es_original")
+    except Exception as exc:
+        if not _is_missing_es_original_error(exc):
+            raise
+        res = _query_user(username, password, cols_base)
+
     rows = res.data or []
     if not rows:
         return None
@@ -41,6 +60,7 @@ def get_user(username: str, password: str):
         "ambito": r.get("ambito"),
         "vertical": r.get("vertical"),
         "rol": r.get("rol"),
+        "es_original": bool(r.get("es_original", False)),
     }
 
 
@@ -113,9 +133,13 @@ def main():
         st.markdown(f"### 👤 {user.get('username','').upper()}")
         st.markdown("---")
 
-        mods = permisos.allowed_modules(user)
-        if not mods:
-            mods = ["Personas"]
+        if permisos.get_ambito(user) == "AGENDA":
+            # AGENDA usa un sidebar aislado y read-only, sin heredar modulos existentes.
+            mods = ["Agenda de Reuniones", "Visualización de Reuniones"]
+        else:
+            mods = permisos.allowed_modules(user)
+            if not mods:
+                mods = ["Personas"]
 
         modulo = st.radio("Módulo", mods, index=0)
 
@@ -139,11 +163,24 @@ def main():
     elif modulo == "Asociaciones":
         router_asociaciones.render(user)
     elif modulo == "Usuarios":
-        usuarios_admin.render(user)
+        # Defensa extra: en COMUNA/VERTICAL solo usuarios originales pueden administrar usuarios.
+        session_user = st.session_state.get("user") or user
+        ambito_user = permisos.get_ambito(session_user)
+        requiere_original = ambito_user in ["COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
+        if requiere_original and not session_user.get("es_original", False):
+            st.warning("No tenés permisos para acceder a este módulo.")
+            st.stop()
+        usuarios_admin.render(session_user)
     elif modulo == "Master Global":
         dashboard_master_global.render(user)
     elif modulo == "Reuniones/Actividades":
         reuniones_app.render_reuniones_screen(user, get_supabase())
+    elif modulo == "Agenda de Reuniones":
+        # Modulo exclusivo AGENDA: lectura global de reuniones sin acciones de escritura.
+        agenda_reuniones_app.render(user, get_supabase())
+    elif modulo == "Visualización de Reuniones":
+        # Modulo exclusivo AGENDA: KPIs read-only sobre el mismo dataset de reuniones.
+        agenda_kpis_app.render(user, get_supabase())
     elif modulo == "Mapa Relacionamiento":
         mapa_relacionamiento_app.render(user)
     elif modulo == "Visualización":

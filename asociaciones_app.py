@@ -396,6 +396,7 @@ def get_asociaciones_for_user(user):
     if scope_kind == "ASOC_TIPO" and scope_value:
         raw = str(scope_value)
 
+        # CLUBES llega desde permisos.py como ASOC_TIPO -> "Clubes"; esta query alimenta tabla, filtros, CSV y mapa.
         # puede venir tipo "Centros de Jubilados|Clubes|Espacios Culturales"
         # o puede venir uno solo tipo "Local comercial"
         tipos_permitidos = [x.strip() for x in raw.split("|") if x.strip()]
@@ -429,44 +430,56 @@ def get_ultimas_interacciones_asoc(asoc_ids):
     """
     Devuelve dict:
       asoc_id -> (fecha_dt_or_None, respuesta_norm, created_by_id)
-    ✅ Importante: solo toma como "feedback" la última interacción que tenga respuesta válida.
+    Importante: solo toma como "feedback" la última interacción que tenga respuesta válida.
        Si la fila es de "seguimiento asignado" y viene sin respuesta, no pisa el feedback.
     """
     if not asoc_ids:
         return {}
 
     supabase = get_supabase()
-    res = (
+    q = (
         supabase.table("interacciones_asociaciones")
         .select("asociacion_id, fecha, respuesta, tipo, created_by")
         .in_("asociacion_id", [int(x) for x in asoc_ids])
         .order("fecha", desc=True)
-        .execute()
     )
-    rows = res.data or []
+
+    # Ultima fecha: una sola carga paginada para las asociaciones visibles, sin query por asociacion.
+    rows, page = [], 0
+    page_size = 1000
+    while True:
+        res = q.range(page * page_size, (page + 1) * page_size - 1).execute()
+        data = res.data or []
+        rows.extend(data)
+        if len(data) < page_size:
+            break
+        page += 1
 
     resumen = {}
-    for r in rows:
-        aid = r.get("asociacion_id")
-        if aid is None or aid in resumen:
-            continue
+    if rows:
+        df_int = pd.DataFrame(rows)
+        df_int["respuesta_limpia"] = df_int["respuesta"].fillna("").astype(str).str.strip()
+        df_int["fecha_dt"] = pd.to_datetime(df_int["fecha"], errors="coerce")
+        df_int["asociacion_id_int"] = pd.to_numeric(df_int["asociacion_id"], errors="coerce")
 
-        resp_raw = (r.get("respuesta") or "").strip().upper()
-        tipo = (r.get("tipo") or "").strip().lower()
+        # Se excluyen respuestas NULL/vacias para que seguimientos asignados no contaminen la ultima fecha.
+        df_validas = df_int[
+            (df_int["respuesta_limpia"] != "")
+            & df_int["fecha_dt"].notna()
+            & df_int["asociacion_id_int"].notna()
+        ].copy()
 
-        if tipo == "seguimiento asignado" and resp_raw == "":
-            continue
-        if resp_raw == "":
-            continue
-
-        fecha_raw = r.get("fecha")
-        try:
-            fecha_dt = pd.to_datetime(fecha_raw).date() if str(fecha_raw).strip() else None
-        except Exception:
-            fecha_dt = None
-
-        resp = _norm_feedback(resp_raw)
-        resumen[aid] = (fecha_dt, resp, r.get("created_by"))
+        if not df_validas.empty:
+            df_validas["asociacion_id_int"] = df_validas["asociacion_id_int"].astype(int)
+            idx_ultimas = df_validas.groupby("asociacion_id_int")["fecha_dt"].idxmax()
+            ultimas = df_validas.loc[idx_ultimas]
+            for _, r in ultimas.iterrows():
+                aid = int(r["asociacion_id_int"])
+                resumen[aid] = (
+                    r["fecha_dt"].date(),
+                    _norm_feedback(r["respuesta_limpia"]),
+                    r.get("created_by"),
+                )
 
     for aid in asoc_ids:
         if int(aid) not in resumen:
@@ -475,7 +488,13 @@ def get_ultimas_interacciones_asoc(asoc_ids):
     return resumen
 
 
-    return resumen
+def _format_fecha_ddmmyyyy(value):
+    if value is None or pd.isna(value):
+        return "-"
+    try:
+        return pd.to_datetime(value).strftime("%d/%m/%Y")
+    except Exception:
+        return "-"
 
 
 def _fetch_all_assigned_users_details(object_type: str, object_ids: list[int]) -> dict:
@@ -799,6 +818,14 @@ def asociaciones_screen():
     if st.session_state["show_new_asoc"]:
         st.markdown("### ➕ Nueva asociación")
         supabase = get_supabase()
+        # Alta manual: asociaciones.comuna_id es NOT NULL; verticales/global deben elegir comuna.
+        tipo_user = (user.get("tipo_usuario") or "").strip().upper()
+        scope_kind_form, _ = _get_scope_asoc()
+        tiene_comuna_fija = (
+            scope_kind_form == "COMUNA"
+            or tipo_user in ["REFERENTE", "REFERENTE_MASTER", "REFERENTE_EXTRACTO"]
+        )
+        comuna_fija = int(user.get("comuna_id") or 1) if tiene_comuna_fija else None
 
         c1, c2 = st.columns(2)
         with c1:
@@ -817,6 +844,12 @@ def asociaciones_screen():
             ref_nombre = st.text_input("Referente (Nombre y apellido)", value="", key="na_ref_nom")
             ref_tel = st.text_input("Teléfono del referente", value="", key="na_ref_tel")
             observaciones = st.text_area("Observaciones", value="", key="na_obs")
+            if comuna_fija is not None:
+                st.selectbox("Comuna *", list(range(1, 16)), index=max(0, comuna_fija - 1), disabled=True, key="na_comuna_fija")
+                comuna_seleccionada = comuna_fija
+            else:
+                # Verticales como CCAA/CLUBES necesitan comuna explicita para cumplir el NOT NULL de Supabase.
+                comuna_seleccionada = st.selectbox("Comuna *", ["Seleccionar"] + list(range(1, 16)), index=0, key="na_comuna")
 
         cg1, cg2 = st.columns(2)
         with cg1:
@@ -832,6 +865,8 @@ def asociaciones_screen():
         if guardar:
             if not nombre.strip() or not direccion.strip():
                 st.error("Completá nombre y dirección.")
+            elif comuna_fija is None and comuna_seleccionada == "Seleccionar":
+                st.error("Seleccioná una comuna.")
             else:
                 try:
                     if dir_sel and dir_sel != "(Usar texto)":
@@ -855,14 +890,8 @@ def asociaciones_screen():
                         "referente_telefono": ref_tel.strip() if ref_tel else None,
                         "latitud": float(lat) if lat is not None else None,
                         "longitud": float(lon) if lon is not None else None,
+                        "comuna_id": int(comuna_seleccionada),
                     }
-
-                    # si es referente (o scope comuna), fija comuna
-                    tipo_user = (user.get("tipo_usuario") or "").strip().upper()
-                    scope_kind, _ = _get_scope_asoc()
-                    if scope_kind == "COMUNA" or tipo_user in ["REFERENTE", "REFERENTE_MASTER", "REFERENTE_EXTRACTO"]:
-                        if user.get("comuna_id") is not None:
-                            data["comuna_id"] = int(user["comuna_id"])
 
                     supabase.table("asociaciones").insert(data).execute()
 
@@ -889,12 +918,24 @@ def asociaciones_screen():
     # Mapeo de usuarios para "Cargado por"
     user_map = asociaciones_edicion.get_usuarios_mapping_asoc()
 
-    df["ultima_fecha"] = df["id"].apply(lambda x: resumen_int.get(int(x), (None, "NO VISITADO", None))[0])
-    df["ultimo_feedback"] = df["id"].apply(lambda x: resumen_int.get(int(x), (None, "NO VISITADO", None))[1])
-    df["cargado_por"] = df["id"].apply(
-        lambda x: user_map.get(resumen_int.get(int(x), (None, "NO VISITADO", None))[2], "Desconocido")
-        if resumen_int.get(int(x), (None, "NO VISITADO", None))[2] else "Desconocido"
+    # Ultima interaccion: se une por id en pandas luego de calcular MAX(fecha) valida por asociacion.
+    df_resumen_int = pd.DataFrame(
+        [
+            {
+                "id": int(aid),
+                "ultima_fecha": data[0],
+                "ultimo_feedback": data[1],
+                "ultima_created_by": data[2],
+            }
+            for aid, data in resumen_int.items()
+        ]
     )
+    df = df.merge(df_resumen_int, on="id", how="left")
+    df["ultimo_feedback"] = df["ultimo_feedback"].fillna("NO VISITADO")
+    df["cargado_por"] = df["ultima_created_by"].apply(
+        lambda uid: user_map.get(uid, "Desconocido") if pd.notna(uid) and uid else "Desconocido"
+    )
+    df.drop(columns=["ultima_created_by"], inplace=True, errors="ignore")
 
     # Asignados
     assigned_details_map = _fetch_all_assigned_users_details("ASOCIACION", asoc_ids)
@@ -983,9 +1024,9 @@ def asociaciones_screen():
         else:
              sel_barrios = []
 
-        # Row 2: Fecha Rango + Limpiar
-        c4, c5 = st.columns([2, 1])
-        with c4:
+        # Row 2: Fecha Rango + filtros de referente + Limpiar
+        c_fecha, c_ref_nom, c_ref_tel, c_limpiar = st.columns([2, 1, 1, 1])
+        with c_fecha:
             fechas_validas = [d for d in df["ultima_fecha"].tolist() if isinstance(d, datetime.date)]
             if fechas_validas:
                 min_d, max_d = min(fechas_validas), max(fechas_validas)
@@ -1005,11 +1046,22 @@ def asociaciones_screen():
                 flt_desde, flt_hasta = None, None
                 incluir_sin_fecha = True
 
-        with c5:
+        with c_ref_nom:
+            st.write("") # spacer
+            solo_ref_nombre = st.checkbox("Solo con referente nombre", key="asoc_solo_ref_nombre")
+
+        with c_ref_tel:
+            st.write("") # spacer
+            solo_ref_tel = st.checkbox("Solo con referente teléfono", key="asoc_solo_ref_tel")
+
+        with c_limpiar:
             st.write("") # spacer
             st.write("") # spacer
             def _limpiar_filtros_asoc():
-                for k in ["flt_a_tipo", "asoc_flt_fb", "flt_a_est_asign", "asoc_flt_rango", "asoc_inc_sin_fecha"]:
+                for k in [
+                    "flt_a_tipo", "asoc_flt_fb", "flt_a_est_asign", "asoc_flt_rango",
+                    "asoc_inc_sin_fecha", "asoc_solo_ref_nombre", "asoc_solo_ref_tel"
+                ]:
                     if k in st.session_state:
                          del st.session_state[k]
                 st.rerun()
@@ -1040,12 +1092,19 @@ def asociaciones_screen():
     if filter_comuna_asoc and filter_comuna_asoc != "Todas":
         df_base = df_base[df_base["comuna_id"] == int(filter_comuna_asoc)]
 
-    # 4) Fecha Rango (renombrado a 6)
+    # 6) Referentes: capa adicional sobre el dataframe ya filtrado por scope.
+    if solo_ref_nombre and "referente_nombre" in df_base.columns:
+        df_base = df_base[df_base["referente_nombre"].fillna("").astype(str).str.strip() != ""]
+    if solo_ref_tel and "referente_telefono" in df_base.columns:
+        df_base = df_base[df_base["referente_telefono"].fillna("").astype(str).str.strip() != ""]
+
+    # 7) Fecha Rango
     if flt_desde and flt_hasta and fechas_validas:
         # Lógica: (fecha in range) OR (fecha is null AND incluir_sin_fecha)
-        mask_rango = (df_base["ultima_fecha"] >= flt_desde) & (df_base["ultima_fecha"] <= flt_hasta)
+        fecha_series = pd.to_datetime(df_base["ultima_fecha"], errors="coerce").dt.date
+        mask_rango = (fecha_series >= flt_desde) & (fecha_series <= flt_hasta)
         if incluir_sin_fecha:
-            mask_final = mask_rango | df_base["ultima_fecha"].isna()
+            mask_final = mask_rango | fecha_series.isna()
         else:
             mask_final = mask_rango
         
@@ -1144,7 +1203,8 @@ def asociaciones_screen():
                 ref_tel = (row.get("referente_telefono") or "").strip()
                 fb = _norm_feedback(row.get("ultimo_feedback"))
                 fecha_val = row.get("ultima_fecha")
-                fecha = str(fecha_val).strip() if (fecha_val is not None and not pd.isna(fecha_val)) else ""
+                fecha_fmt = _format_fecha_ddmmyyyy(fecha_val)
+                fecha = fecha_fmt if fecha_fmt != "-" else ""
 
                 tooltip_html = f"""
                 <div style="font-size:12px;">
@@ -1211,6 +1271,9 @@ def asociaciones_screen():
     ]
     columnas = [c for c in columnas if c in df_table.columns]
     df_show = df_table[columnas].copy()
+    if "ultima_fecha" in df_show.columns:
+        # Tabla principal: muestra DD/MM/YYYY sin cambiar el valor fecha usado por los filtros.
+        df_show["ultima_fecha"] = df_show["ultima_fecha"].apply(_format_fecha_ddmmyyyy)
 
     gb = GridOptionsBuilder.from_dataframe(df_show)
     gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=140, wrapText=True, autoHeight=True)

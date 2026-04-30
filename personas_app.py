@@ -480,18 +480,20 @@ def _chunk_list(xs, size: int):
         yield xs[i:i + size]
 
 
-def get_interacciones_resumen(persona_ids, chunk_size: int = 250):
+@st.cache_data(ttl=120)
+def get_interacciones_resumen(persona_ids_tuple: tuple, chunk_size: int = 250):
     """
     Devuelve dict:
       persona_id -> (fecha_dt, status_norm, created_by_id)
+    Recibe una tupla para que sea hasheable por st.cache_data.
     """
-    if not persona_ids:
+    if not persona_ids_tuple:
         return {}
 
     supabase = get_supabase()
     rows = []
 
-    for chunk in _chunk_list([int(x) for x in persona_ids], chunk_size):
+    for chunk in _chunk_list([int(x) for x in persona_ids_tuple], chunk_size):
         page, page_size = 0, 1000
         while True:
             res = (
@@ -540,16 +542,18 @@ def get_interacciones_resumen(persona_ids, chunk_size: int = 250):
     return resumen
 
 
-def _fetch_all_assigned_users_details(object_type: str, object_ids: list[int]) -> dict:
+@st.cache_data(ttl=120)
+def _fetch_all_assigned_users_details(object_type: str, object_ids_tuple: tuple) -> dict:
     """
     Retorna {object_id: [ {username, rol, comuna_id, vertical}, ... ] }
+    Recibe una tupla para que sea hasheable por st.cache_data.
     """
-    if not object_ids:
+    if not object_ids_tuple:
         return {}
     supabase = get_supabase()
     rows = []
     chunk_size = 200
-    oids_list = list(object_ids)
+    oids_list = list(object_ids_tuple)
     
     for i in range(0, len(oids_list), chunk_size):
         chunk = oids_list[i:i+chunk_size]
@@ -739,49 +743,53 @@ def personas_screen():
                             _pg += 1
                         _dnis_existentes = {str(r["dni"]).strip() for r in _dni_rows if r.get("dni")}
 
-                        _exitosos, _errores_lista = 0, []
-                        _progreso = st.progress(0)
-                        _total = len(_df_csv)
+                        _errores_lista = []
+                        _registros = []
+                        _hoy = str(datetime.date.today())
+                        _origen = f"CARGADO POR USUARIO {user.get('username', '')}"
 
+                        # Validar todas las filas primero y acumular registros válidos
                         for _idx, _row in _df_csv.iterrows():
+                            _nom = str(_row.get("Nombre y Apellido", "")).strip()
+                            _tel = str(_row.get("Telefono", "")).strip()
+                            _dni = str(_row.get("DNI", "")).strip()
+                            _com_raw = _row.get("Comuna")
+
+                            if not _nom or not _tel or not _dni:
+                                _errores_lista.append(f"Fila {_idx + 2}: Nombre, Teléfono y DNI son obligatorios.")
+                                continue
+
+                            if _dni in _dnis_existentes:
+                                _errores_lista.append(f"Fila {_idx + 2}: DNI {_dni} ya existe en la base.")
+                                continue
+
+                            if (user.get("ambito") or "").strip().upper() == "COMUNA":
+                                _com_id = int(user.get("comuna_id") or 1)
+                            else:
+                                try:
+                                    _com_id = int(float(str(_com_raw).strip()))
+                                except Exception:
+                                    _errores_lista.append(f"Fila {_idx + 2}: Comuna inválida ('{_com_raw}').")
+                                    continue
+
+                            _registros.append({
+                                "nombre_apellido": _nom,
+                                "telefono": _tel,
+                                "dni": _dni,
+                                "comuna_id": _com_id,
+                                "de_donde_salio": _origen,
+                                "creado_en": _hoy,
+                            })
+                            _dnis_existentes.add(_dni)
+
+                        # Insertar todos los registros válidos en una sola llamada
+                        _exitosos = 0
+                        if _registros:
                             try:
-                                _nom = str(_row.get("Nombre y Apellido", "")).strip()
-                                _tel = str(_row.get("Telefono", "")).strip()
-                                _dni = str(_row.get("DNI", "")).strip()
-                                _com_raw = _row.get("Comuna")
-
-                                if not _nom or not _tel or not _dni:
-                                    _errores_lista.append(f"Fila {_idx + 2}: Nombre, Teléfono y DNI son obligatorios.")
-                                    continue
-
-                                if _dni in _dnis_existentes:
-                                    _errores_lista.append(f"Fila {_idx + 2}: DNI {_dni} ya existe en la base.")
-                                    continue
-
-                                # Determinar comuna_id
-                                if (user.get("ambito") or "").strip().upper() == "COMUNA":
-                                    _com_id = int(user.get("comuna_id") or 1)
-                                else:
-                                    try:
-                                        _com_id = int(float(str(_com_raw).strip()))
-                                    except Exception:
-                                        _errores_lista.append(f"Fila {_idx + 2}: Comuna inválida ('{_com_raw}').")
-                                        continue
-
-                                _supabase.table("personas").insert({
-                                    "nombre_apellido": _nom,
-                                    "telefono": _tel,
-                                    "dni": _dni,
-                                    "comuna_id": _com_id,
-                                    "de_donde_salio": f"CARGADO POR USUARIO {user.get('username', '')}",
-                                    "creado_en": str(datetime.date.today()),
-                                }).execute()
-                                _dnis_existentes.add(_dni)
-                                _exitosos += 1
+                                _supabase.table("personas").insert(_registros).execute()
+                                _exitosos = len(_registros)
                             except Exception as _e:
-                                _errores_lista.append(f"Fila {_idx + 2}: {_e}")
-
-                            _progreso.progress((_idx + 1) / _total)
+                                _errores_lista.append(f"Error al insertar en la base de datos: {_e}")
 
                         st.success(f"Finalizado. ✅ Insertadas: {_exitosos} | ❌ Errores: {len(_errores_lista)}")
                         if _errores_lista:
@@ -909,7 +917,7 @@ def personas_screen():
 
     # Resumen últimas interacciones (chunked)
     pids = df["id"].tolist()
-    resumen_int = get_interacciones_resumen(pids)
+    resumen_int = get_interacciones_resumen(tuple(pids))
     
     # Mapeo de usuarios para "Cargado por"
     user_map = personas_edicion.get_usuarios_mapping()
@@ -931,7 +939,7 @@ def personas_screen():
     df["semaforo_respuesta"] = df["ultima_resp"].apply(semaforo_respuesta_label)
 
     # Asignados
-    assigned_details_map = _fetch_all_assigned_users_details("PERSONA", persona_ids)
+    assigned_details_map = _fetch_all_assigned_users_details("PERSONA", tuple(persona_ids))
     # user = st.session_state["user"] (ya definido al inicio de personas_screen)
     user = st.session_state["user"]
     
@@ -1267,29 +1275,26 @@ def personas_screen():
                 observ = st.text_area("Observaciones", value="", key="mass_int_obs")
 
                 if st.button(f"✅ Guardar interacción para {len(ids_selected)} personas", key="btn_save_mass"):
-                    success_count = 0
-                    error_count = 0
-                    bar = st.progress(0)
-                    
-                    for i, pid in enumerate(ids_selected):
-                        try:
-                            personas_edicion.insert_interaccion({
-                                "persona_id": int(pid),
-                                "fecha": str(fecha),
-                                "respuesta": respuesta,
-                                "medio": medio,
-                                "para_que_contacte": para_que,
-                                "observaciones": observ,
-                                "tipo": "interacción masiva",
-                                "created_by": int(user["id"]),
-                                "seguimiento_cerrado": False,
-                            })
-                            success_count += 1
-                        except Exception:
-                            error_count += 1
-                        bar.progress((i + 1) / len(ids_selected))
-                    
-                    st.success(f"Finalizado. Exitosos: {success_count}. Errores: {error_count}.")
+                    _payloads = [
+                        {
+                            "persona_id": int(pid),
+                            "fecha": str(fecha),
+                            "respuesta": respuesta,
+                            "medio": medio,
+                            "para_que_contacte": para_que,
+                            "observaciones": observ,
+                            "tipo": "interacción masiva",
+                            "created_by": int(user["id"]),
+                            "seguimiento_cerrado": False,
+                        }
+                        for pid in ids_selected
+                    ]
+                    try:
+                        personas_edicion.insert_interacciones_bulk(_payloads)
+                        st.success(f"Finalizado. ✅ {len(_payloads)} interacciones guardadas.")
+                        get_interacciones_resumen.clear()
+                    except Exception as _e:
+                        st.error(f"Error al guardar interacciones: {_e}")
                     st.session_state["show_mass_interaction"] = False
                     st.rerun()
 

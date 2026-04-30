@@ -252,6 +252,23 @@ def _insert_asignaciones(usuario_id: int, personas_ids: list[int], asociaciones_
     supabase.table("usuarios_asignaciones").insert(rows).execute()
 
 
+def _is_missing_es_original_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return "es_original" in msg and ("schema cache" in msg or "does not exist" in msg or "column" in msg)
+
+
+def _insert_usuario(payload: dict):
+    supabase = get_supabase()
+    try:
+        return supabase.table("usuarios").insert(payload).execute()
+    except Exception as exc:
+        if not _is_missing_es_original_error(exc):
+            raise
+        payload_sin_original = dict(payload)
+        payload_sin_original.pop("es_original", None)
+        return supabase.table("usuarios").insert(payload_sin_original).execute()
+
+
 def _delete_asignaciones(usuario_id: int, objeto_tipo: str, object_ids: list[int]):
     """Elimina asignaciones de un usuario y tipo específico."""
     if not object_ids:
@@ -1160,6 +1177,8 @@ def render(user: dict):
                 "rol": (rol or "").strip().upper() if rol else None,
                 "tipo_usuario": (tipo_usuario or "").strip().upper() if tipo_usuario else None,
                 "comuna_id": int(comuna_id) if comuna_id is not None else None,
+                # Los usuarios creados desde UI nunca son originales; solo Supabase puede promoverlos.
+                "es_original": False,
             }
 
             # reglas duras (igual a lo que venías usando)
@@ -1187,7 +1206,7 @@ def render(user: dict):
                     return
 
                 # 1) crear usuario
-                ins = supabase.table("usuarios").insert(payload).execute()
+                ins = _insert_usuario(payload)
 
                 # 2) recuperar id (si no vino en response, buscar por username)
                 new_id = None

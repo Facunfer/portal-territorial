@@ -247,6 +247,12 @@ def insert_interaccion_asoc(payload: dict):
     _safe_insert("interacciones_asociaciones", payload)
 
 
+def _reset_asoc_filters_after_interaction():
+    # Al guardar una interaccion cambian feedback/ultima fecha; limpiar esos filtros evita que el registro desaparezca del mapa/tabla del usuario.
+    for key in ["asoc_flt_fb", "asoc_flt_rango", "asoc_inc_sin_fecha"]:
+        st.session_state.pop(key, None)
+
+
 def get_historial_asoc(asoc_id: int):
     """
     Historial ordenado por fecha desc (más reciente arriba).
@@ -372,6 +378,7 @@ def cerrar_seguimiento_asoc(seguimiento_id: int):
     supabase = get_supabase()
     supabase.table("seguimientos_asociaciones").update({"estado": "hecho"}).eq("id", int(seguimiento_id)).execute()
 
+@st.cache_data(ttl=300)
 def get_usuarios_mapping_asoc():
     """Retorna un dict {id: username} de todos los usuarios para mostrar en el historial."""
     supabase = get_supabase()
@@ -426,6 +433,7 @@ def render_casos_asignados(user):
                         "seguimiento_cerrado": True,
                     })
                     cerrar_seguimiento_asoc(int(c["id"]))
+                    _reset_asoc_filters_after_interaction()
                     st.success("Interacción cargada y seguimiento cerrado.")
                     st.rerun()
                 except Exception as e:
@@ -595,6 +603,7 @@ def render_ficha_asociacion(user, asoc_id: int):
                     "created_by": int(user["id"]),
                     "seguimiento_cerrado": False,
                 })
+                _reset_asoc_filters_after_interaction()
                 st.success("Interacción guardada.")
                 st.rerun()
             except Exception as e:
