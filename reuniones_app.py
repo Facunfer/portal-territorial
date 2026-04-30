@@ -131,44 +131,44 @@ def insert_reunion(supabase, user: dict, data: dict, asistentes_ids: list = None
         "realizada": data.get("realizada"),
     }
     
-    res = supabase.table("reuniones").insert(payload).execute()
+    try:
+        res = supabase.table("reuniones").insert(payload).execute()
+    except Exception as e:
+        raise RuntimeError(f"No se pudo guardar la reunión: {e}") from e
+
     if not res.data:
         return res
-        
+
     new_reunion_id = res.data[0]["id"]
-    
+
     if asistentes_ids:
-        # 1. Insertar asistentes en tabla puente
         asistentes_data = []
         interacciones_data = []
-        hoy = str(datetime.date.today())
-        
+
         for pid in asistentes_ids:
             asistentes_data.append({
                 "reunion_id": new_reunion_id,
                 "persona_id": pid,
                 "created_by": user.get("id")
             })
-            
-            # Chequeo muy básico de duplicados en memoria no es ideal, pero confiamos 
-            # en que insertamos todo junto. Si la reunión es nueva, no debería haber duplicados.
-            
-            # 2. Interacciones automáticas
             interacciones_data.append({
-                 "persona_id": pid,
-                 "tipo": "Participó de reunión",
-                 "respuesta": "POSITIVO",
-                 "fecha": str(data["fecha"]), # Usamos fecha de reunión
-                 "reunion_id": new_reunion_id,
-                 "created_by": user.get("id"),
-                 "observaciones": f"Asistió a reunión: {data['titulo']}"
+                "persona_id": pid,
+                "tipo": "Participó de reunión",
+                "respuesta": "POSITIVO",
+                "fecha": str(data["fecha"]),
+                "reunion_id": new_reunion_id,
+                "created_by": user.get("id"),
+                "observaciones": f"Asistió a reunión: {data['titulo']}"
             })
-            
-        if asistentes_data:
-            supabase.table("reuniones_asistentes").insert(asistentes_data).execute()
-        if interacciones_data:
-            supabase.table("interacciones_personas").insert(interacciones_data).execute()
-            
+
+        try:
+            if asistentes_data:
+                supabase.table("reuniones_asistentes").insert(asistentes_data).execute()
+            if interacciones_data:
+                supabase.table("interacciones_personas").insert(interacciones_data).execute()
+        except Exception as e:
+            raise RuntimeError(f"Reunión guardada, pero falló el registro de asistentes: {e}") from e
+
     return res
 
 def _scope_label(scope_tipo: str, scope_valor) -> str:
@@ -352,14 +352,20 @@ def render_reuniones_screen(user: dict, supabase):
                             st.caption(f"🏷️ {_scope_label(row.get('scope_tipo'), row.get('scope_valor'))}")
                     with c2:
                         if st.button("✅ Se realizó", key=f"btn_realizada_{row['id']}"):
-                            supabase.table("reuniones").update({"realizada": True}).eq("id", row["id"]).execute()
-                            st.success("Marcada como realizada.")
-                            st.rerun()
+                            try:
+                                supabase.table("reuniones").update({"realizada": True}).eq("id", row["id"]).execute()
+                                st.success("Marcada como realizada.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"No se pudo actualizar la reunión. Intentá de nuevo.")
                     with c3:
                         if st.button("❌ No se hizo", key=f"btn_no_realizada_{row['id']}"):
-                            supabase.table("reuniones").update({"realizada": False}).eq("id", row["id"]).execute()
-                            st.warning("Marcada como no realizada.")
-                            st.rerun()
+                            try:
+                                supabase.table("reuniones").update({"realizada": False}).eq("id", row["id"]).execute()
+                                st.warning("Marcada como no realizada.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"No se pudo actualizar la reunión. Intentá de nuevo.")
 
     # -------------------------
     # TAB 2: HISTORIAL (fecha < hoy O realizada = TRUE)

@@ -93,7 +93,12 @@ def show_login():
             st.error("Completá usuario y contraseña.")
             return
 
-        user = get_user(username, password)
+        try:
+            user = get_user(username, password)
+        except Exception:
+            st.error("No se pudo conectar con el servidor. Verificá tu conexión e intentá de nuevo.")
+            return
+
         if not user:
             st.session_state["login_intentos"] += 1
             intentos = st.session_state["login_intentos"]
@@ -158,37 +163,42 @@ def main():
             st.rerun()
 
     # Render módulo
-    if modulo == "Personas":
-        router_personas.render(user)
-    elif modulo == "Asociaciones":
-        router_asociaciones.render(user)
-    elif modulo == "Usuarios":
-        # Defensa extra: en COMUNA/VERTICAL solo usuarios originales pueden administrar usuarios.
-        session_user = st.session_state.get("user") or user
-        ambito_user = permisos.get_ambito(session_user)
-        requiere_original = ambito_user in ["COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
-        if requiere_original and not session_user.get("es_original", False):
-            st.warning("No tenés permisos para acceder a este módulo.")
-            st.stop()
-        usuarios_admin.render(session_user)
-    elif modulo == "Master Global":
-        dashboard_master_global.render(user)
-    elif modulo == "Reuniones/Actividades":
-        reuniones_app.render_reuniones_screen(user, get_supabase())
-    elif modulo == "Agenda de Reuniones":
-        # Modulo exclusivo AGENDA: lectura global de reuniones sin acciones de escritura.
-        agenda_reuniones_app.render(user, get_supabase())
-    elif modulo == "Visualización de Reuniones":
-        # Modulo exclusivo AGENDA: KPIs read-only sobre el mismo dataset de reuniones.
-        agenda_kpis_app.render(user, get_supabase())
-    elif modulo == "Mapa Relacionamiento":
-        mapa_relacionamiento_app.render(user)
-    elif modulo == "Visualización":
-        kpis_app.render(user, get_supabase())
-    elif modulo == "Consultas":
-        ia_app.render(user)
-    else:
-        st.warning("Módulo no reconocido.")
+    try:
+        if modulo == "Personas":
+            router_personas.render(user)
+        elif modulo == "Asociaciones":
+            router_asociaciones.render(user)
+        elif modulo == "Usuarios":
+            session_user = st.session_state.get("user") or user
+            ambito_user = permisos.get_ambito(session_user)
+            requiere_original = ambito_user in ["COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
+            if requiere_original and not session_user.get("es_original", False):
+                st.warning("No tenés permisos para acceder a este módulo.")
+                st.stop()
+            usuarios_admin.render(session_user)
+        elif modulo == "Master Global":
+            dashboard_master_global.render(user)
+        elif modulo == "Reuniones/Actividades":
+            reuniones_app.render_reuniones_screen(user, get_supabase())
+        elif modulo == "Agenda de Reuniones":
+            agenda_reuniones_app.render(user, get_supabase())
+        elif modulo == "Visualización de Reuniones":
+            agenda_kpis_app.render(user, get_supabase())
+        elif modulo == "Mapa Relacionamiento":
+            mapa_relacionamiento_app.render(user)
+        elif modulo == "Visualización":
+            kpis_app.render(user, get_supabase())
+        elif modulo == "Consultas":
+            ia_app.render(user)
+        else:
+            st.warning("Módulo no reconocido.")
+    except Exception as _e:
+        st.error(
+            "Ocurrió un error inesperado en este módulo. "
+            "Intentá recargar la página. Si el problema persiste, contactá al administrador."
+        )
+        with st.expander("Detalle técnico (para el administrador)"):
+            st.code(str(_e))
 
 
 if __name__ == "__main__":
