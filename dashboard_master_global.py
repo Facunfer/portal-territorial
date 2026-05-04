@@ -321,11 +321,14 @@ def render_dashboard_master_global(user):
 
     # --- CALCULO DE SEMAFOROS ---
     def _calc_sem(df_obj, df_int_raw, id_col, is_asoc=False):
-        if df_obj.empty: return df_obj
-        # Usamos df_int_raw para ver el HISTORICO completo de semaforos (independiente del filtro de fecha actual UI)
+        # Siempre devolvemos con las columnas esperadas para evitar KeyError en la UI
+        if df_obj.empty:
+            df_obj = df_obj.copy()
+            df_obj['Última Fecha'] = pd.Series(dtype=str)
+            df_obj['Resultado'] = pd.Series(dtype=str)
+            return df_obj
         last_int = df_int_raw.sort_values('fecha', ascending=False).drop_duplicates(id_col)
         df_merged = df_obj.merge(last_int[[id_col, 'fecha', 'respuesta']], left_on='id', right_on=id_col, how='left')
-        
         today_ts = pd.Timestamp.now().normalize()
         df_merged['dias_contacto'] = (today_ts - pd.to_datetime(df_merged['fecha'])).dt.days
         df_merged['Última Fecha'] = df_merged['dias_contacto'].apply(lambda x: _semaforo_tiempo_label(x, is_asoc))
@@ -396,14 +399,17 @@ def render_dashboard_master_global(user):
         
         def _semaforos_ui(df, title_suffix, is_asoc=False):
             with st.expander(f"Ver Semáforos de {title_suffix}", expanded=True):
+                if df.empty or 'Resultado' not in df.columns or 'Última Fecha' not in df.columns:
+                    st.info(f"No hay datos de {title_suffix} para los filtros seleccionados.")
+                    return
+
                 c1, c2 = st.columns(2)
-                
                 expected_resp = LABELS_RESP_A if is_asoc else LABELS_RESP_P
                 expected_time = LABELS_TIEMPO_A if is_asoc else LABELS_TIEMPO_P
-                
+
                 with c1:
                     resp_counts = df.groupby(['Resultado']).size().reset_index(name='count')
-                    fig_r = px.bar(resp_counts, x='Resultado', y='count', title=f"Resultado ({title_suffix})", 
+                    fig_r = px.bar(resp_counts, x='Resultado', y='count', title=f"Resultado ({title_suffix})",
                                    color='Resultado',
                                    color_discrete_map=COLOR_MAP,
                                    category_orders={"Resultado": expected_resp})
