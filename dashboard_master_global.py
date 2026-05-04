@@ -31,7 +31,7 @@ def fetch_global_data():
     df_p = fetch_all("personas", "id, comuna_id, tags, creado_en, telefono, barrio")
     
     # 2. Asociaciones
-    df_a = fetch_all("asociaciones", "id, comuna_id, tipo, referente_nombre, referente_telefono, barrio")
+    df_a = fetch_all("asociaciones", "id, comuna_id, tipo, referente_nombre, referente_telefono")
     
     # 3. Interacciones (ampliamos a 180 días para tener más margen histórico)
     since_180 = (datetime.date.today() - datetime.timedelta(days=180)).isoformat()
@@ -177,7 +177,7 @@ def render_dashboard_master_global(user):
 
     # --- BOTON REFRESCAR ---
     if st.button("🔄 Refrescar datos"):
-        st.cache_data.clear()
+        fetch_global_data.clear()
         st.rerun()
 
     with st.spinner("Cargando métricas globales..."):
