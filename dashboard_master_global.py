@@ -4,7 +4,44 @@ import plotly.express as px
 import datetime
 
 from db import get_supabase
+from constants import VERTICALES_SEGMENTOS
 import personas_edicion
+
+# Mapeo vertical → tag en personas
+VERTICAL_TAG_MAP = {
+    "GENERACION_PLATEADA": "GENERACIÓN PLATEADA",
+    "MIGRANTES":           "MIGRANTE",
+    "CULTO":               "CULTO",
+    "CCAA":                "COMERCIANTE",
+    "PYMES":               "PYME",
+    "JOVENES_EMPRESARIOS": "JUVENTUD",
+    "INNOVACION_TECNOLOGIA": None,
+    "EDUCACION":           "EDUCACIÓN",
+    "SALUD":               "SALUD",
+    "CULTURA":             "CULTURA",
+}
+
+# Mapeo vertical → tipo en asociaciones
+VERTICAL_TIPO_MAP = {
+    "CULTO":    "Espacios de Culto",
+    "CCAA":     "Local comercial",
+    "CULTURA":  "Espacios Culturales",
+    "CLUBES":   "Clubes",
+}
+
+# Labels legibles para mostrar en el selector
+VERTICAL_LABELS = {
+    "GENERACION_PLATEADA":   "Generación Plateada",
+    "MIGRANTES":             "Migrantes",
+    "CULTO":                 "Culto",
+    "CCAA":                  "CCAA",
+    "PYMES":                 "Pymes",
+    "JOVENES_EMPRESARIOS":   "Jóvenes Empresarios",
+    "INNOVACION_TECNOLOGIA": "Innovación / Tecnología",
+    "EDUCACION":             "Educación",
+    "SALUD":                 "Salud",
+    "CULTURA":               "Cultura",
+}
 
 @st.cache_data(ttl=300)
 def fetch_global_data():
@@ -102,6 +139,7 @@ def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
     f_tags = filters.get("tags", [])
     f_tipo = filters.get("tipo")
     f_fechas = filters.get("fechas", [])
+    f_verticales = filters.get("verticales", [])
     
     p, a, ip, ia, r = df_p.copy(), df_a.copy(), df_ip.copy(), df_ia.copy(), df_r.copy()
     
@@ -164,7 +202,35 @@ def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
         a = a[a['tipo'] == f_tipo]
         a_ids = set(a['id'].tolist())
         ia = ia[ia['asociacion_id'].isin(a_ids)]
-        
+
+    # 5. Filtro Vertical de Segmento (afecta personas por tag Y asociaciones por tipo)
+    if f_verticales:
+        # Tags de personas que corresponden a las verticales seleccionadas
+        tags_verticales = {
+            VERTICAL_TAG_MAP[v]
+            for v in f_verticales
+            if VERTICAL_TAG_MAP.get(v)
+        }
+        # Tipos de asociaciones que corresponden a las verticales seleccionadas
+        tipos_verticales = {
+            VERTICAL_TIPO_MAP[v]
+            for v in f_verticales
+            if VERTICAL_TIPO_MAP.get(v)
+        }
+
+        if tags_verticales and not p.empty:
+            tags_upper = {t.upper() for t in tags_verticales}
+            p['_tag_list'] = p['tags'].apply(_parse_tags)
+            p = p[p['_tag_list'].apply(lambda x: any(t in x for t in tags_upper))].copy()
+            p.drop(columns=['_tag_list'], inplace=True)
+            p_ids = set(p['id'].tolist())
+            ip = ip[ip['persona_id'].isin(p_ids)]
+
+        if tipos_verticales and not a.empty:
+            a = a[a['tipo'].isin(tipos_verticales)].copy()
+            a_ids = set(a['id'].tolist())
+            ia = ia[ia['asociacion_id'].isin(a_ids)]
+
     return p, a, ip, ia, r
     
 # ==============================================================================
@@ -220,22 +286,29 @@ def render_dashboard_master_global(user):
             f_barrios = st.multiselect("Barrios", options=all_barrios)
         
         with fcol2:
-            all_tags = set(personas_edicion.TAGS_SUGERIDOS) # Inicializar con los sugeridos
+            # Filtro por Vertical de Segmento (filtra personas por tag Y asociaciones por tipo)
+            vertical_options = {VERTICAL_LABELS[v]: v for v in VERTICALES_SEGMENTOS if v in VERTICAL_LABELS}
+            f_verticales_labels = st.multiselect(
+                "Verticales de Segmento",
+                options=list(vertical_options.keys()),
+                help="Filtra personas por su tag correspondiente y asociaciones por su tipo."
+            )
+            f_verticales = [vertical_options[lbl] for lbl in f_verticales_labels]
+
+            all_tags = set(personas_edicion.TAGS_SUGERIDOS)
             for row in df_p_raw['tags'].dropna():
                 for t in _parse_tags(row): all_tags.add(t)
-            # CAMBIO: Multiselect para Tags
             f_tags = st.multiselect("Tags Personas (OR)", options=sorted(list(all_tags)))
-            
+
+        with fcol3:
             tipos_available = sorted([str(x) for x in df_a_raw['tipo'].dropna().unique()])
             f_tipo = st.selectbox("Vertical (Asociaciones)", ["Todos"] + tipos_available)
-            
-        with fcol3:
-            # Filtro de fecha rango
+
             today = datetime.date.today()
             def_start = today - datetime.timedelta(days=30)
             f_fechas = st.date_input("Rango de Interacciones", value=(def_start, today))
-    
-    filters = {"comunas": f_comunas, "barrios": f_barrios, "tags": f_tags, "tipo": f_tipo, "fechas": f_fechas}
+
+    filters = {"comunas": f_comunas, "barrios": f_barrios, "tags": f_tags, "tipo": f_tipo, "fechas": f_fechas, "verticales": f_verticales}
     p, a, ip, ia, r = filter_data(df_p_raw, df_a_raw, df_ip_raw, df_ia_raw, df_r_raw, filters)
 
     # --- ENRIQUECIMIENTO GLOBAL (Comuna IDs) ---
