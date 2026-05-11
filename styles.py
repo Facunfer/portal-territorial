@@ -256,19 +256,23 @@ def load_css():
            MÉTRICAS / KPIs (st.metric)
            ========================================= */
         [data-testid="stMetric"],
+        [data-testid="stMetric"] *,
         [data-testid="stMetricValue"],
-        [data-testid="stMetricValue"] > div,
+        [data-testid="stMetricValue"] *,
         [data-testid="stMetricLabel"],
-        [data-testid="stMetricLabel"] > div,
-        [data-testid="stMetricLabel"] p,
+        [data-testid="stMetricLabel"] *,
         [data-testid="stMetricDelta"],
-        [data-testid="stMetricDelta"] > div {
+        [data-testid="stMetricDelta"] *,
+        [data-testid="metric-container"],
+        [data-testid="metric-container"] * {
             color: #333333 !important;
             -webkit-text-fill-color: #333333 !important;
+            color-scheme: light !important;
         }
 
-        /* El número grande del metric */
-        [data-testid="stMetricValue"] > div {
+        /* El número grande del metric — violeta y negrita */
+        [data-testid="stMetricValue"] > div,
+        [data-testid="stMetricValue"] > div > div {
             color: #371959 !important;
             -webkit-text-fill-color: #371959 !important;
             font-weight: 700 !important;
