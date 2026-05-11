@@ -149,15 +149,17 @@ def load_css():
             color: #333333 !important;
         }
 
-        /* Forzar fondo blanco en todos los contenedores principales */
+        /* Forzar fondo blanco en contenedores principales (sin tocar sidebar) */
         [data-testid="stAppViewContainer"],
-        [data-testid="stAppViewBlock"],
         [data-testid="block-container"],
-        [data-testid="stVerticalBlock"],
-        [data-testid="stHorizontalBlock"],
         .main, .block-container {
             background-color: #FFFFFF !important;
-            color: #333333 !important;
+        }
+
+        /* Sidebar: texto blanco siempre (tiene mayor especificidad que las reglas generales) */
+        [data-testid="stSidebar"] *:not(button) {
+            color: #FFFFFF !important;
+            -webkit-text-fill-color: #FFFFFF !important;
         }
 
         /* Texto general del área principal siempre oscuro */
