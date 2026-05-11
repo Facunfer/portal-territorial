@@ -253,6 +253,47 @@ def load_css():
         }
 
         /* =========================================
+           MÉTRICAS / KPIs (st.metric)
+           ========================================= */
+        [data-testid="stMetric"],
+        [data-testid="stMetricValue"],
+        [data-testid="stMetricValue"] > div,
+        [data-testid="stMetricLabel"],
+        [data-testid="stMetricLabel"] > div,
+        [data-testid="stMetricLabel"] p,
+        [data-testid="stMetricDelta"],
+        [data-testid="stMetricDelta"] > div {
+            color: #333333 !important;
+            -webkit-text-fill-color: #333333 !important;
+        }
+
+        /* El número grande del metric */
+        [data-testid="stMetricValue"] > div {
+            color: #371959 !important;
+            -webkit-text-fill-color: #371959 !important;
+            font-weight: 700 !important;
+        }
+
+        /* =========================================
+           TABLAS / DATAFRAMES
+           ========================================= */
+        [data-testid="stDataFrame"] *,
+        .dataframe * {
+            color: #333333 !important;
+            -webkit-text-fill-color: #333333 !important;
+        }
+
+        /* =========================================
+           EXPANDERS
+           ========================================= */
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary *,
+        [data-testid="stExpander"] p {
+            color: #333333 !important;
+            -webkit-text-fill-color: #333333 !important;
+        }
+
+        /* =========================================
            ALERTS / INFO / WARNING
            ========================================= */
         [data-testid="stNotification"] {
