@@ -1,6 +1,7 @@
 # app.py
 import streamlit as st
 import datetime
+import bcrypt
 
 from db import get_supabase
 import permisos
@@ -24,34 +25,69 @@ def _is_missing_es_original_error(exc: Exception) -> bool:
     return "es_original" in msg and ("schema cache" in msg or "does not exist" in msg or "column" in msg)
 
 
-def _query_user(username: str, password: str, cols: str):
+def _query_user_by_username(username: str, cols: str):
+    """Busca usuario solo por username (la verificación de contraseña se hace en Python)."""
     supabase = get_supabase()
     return (
         supabase.table("usuarios")
         .select(cols)
         .eq("username", username)
-        .eq("password_hash", password)
         .eq("activo", True)
         .limit(1)
         .execute()
     )
 
 
-def get_user(username: str, password: str):
-    cols_base = "id, username, tipo_usuario, comuna_id, ambito, vertical, rol"
+def _upgrade_password_hash(user_id: int, new_hash: str) -> None:
+    """Actualiza un hash de contraseña en texto plano a bcrypt silenciosamente."""
     try:
-        # es_original restringe Usuarios para COMUNA/VERTICAL; si falta la columna, reintentamos seguro.
-        res = _query_user(username, password, f"{cols_base}, es_original")
+        get_supabase().table("usuarios").update(
+            {"password_hash": new_hash}
+        ).eq("id", user_id).execute()
+    except Exception:
+        pass  # No bloquear el login si falla el upgrade
+
+
+def get_user(username: str, password: str):
+    """
+    Autentica un usuario comparando la contraseña localmente con bcrypt.
+    Soporta contraseñas en texto plano (legacy) y las migra automáticamente
+    a bcrypt en el primer login exitoso.
+    """
+    cols_base = "id, username, tipo_usuario, comuna_id, ambito, vertical, rol, password_hash"
+    try:
+        res = _query_user_by_username(username, f"{cols_base}, es_original")
     except Exception as exc:
         if not _is_missing_es_original_error(exc):
             raise
-        res = _query_user(username, password, cols_base)
+        res = _query_user_by_username(username, cols_base)
 
     rows = res.data or []
     if not rows:
         return None
 
     r = rows[0]
+    stored_hash = r.get("password_hash") or ""
+
+    # ── Verificación de contraseña ───────────────────────────────────────────
+    is_bcrypt = stored_hash.startswith(("$2b$", "$2a$", "$2y$"))
+
+    if is_bcrypt:
+        try:
+            ok = bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+        except Exception:
+            ok = False
+    else:
+        # Hash en texto plano (legacy) — comparación directa
+        ok = (stored_hash == password)
+        if ok:
+            # Auto-upgrade silencioso a bcrypt en el primer login exitoso
+            new_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            _upgrade_password_hash(r["id"], new_hash)
+
+    if not ok:
+        return None
+
     return {
         "id": r.get("id"),
         "username": r.get("username"),
@@ -64,26 +100,59 @@ def get_user(username: str, password: str):
     }
 
 
+# =========================
+# Rate limiting (server-side — compartido entre TODAS las sesiones)
+# =========================
 _MAX_INTENTOS = 5
 _BLOQUEO_SEGUNDOS = 300
+
+
+@st.cache_resource
+def _get_login_tracker() -> dict:
+    """
+    Singleton compartido entre todas las sesiones de Streamlit.
+    Estructura: { username_lower: {"attempts": int, "blocked_until": datetime | None} }
+    Usar st.cache_resource garantiza que persiste mientras el proceso viva,
+    a diferencia de st.session_state que es por pestaña del navegador.
+    """
+    return {}
+
+
+def _rl_is_blocked(username: str) -> tuple[bool, int]:
+    """Devuelve (bloqueado, segundos_restantes)."""
+    tracker = _get_login_tracker()
+    entry = tracker.get(username.strip().lower(), {})
+    blocked_until = entry.get("blocked_until")
+    if blocked_until and datetime.datetime.now() < blocked_until:
+        restante = int((blocked_until - datetime.datetime.now()).total_seconds())
+        return True, restante
+    return False, 0
+
+
+def _rl_register_failure(username: str) -> int:
+    """Registra un intento fallido. Devuelve intentos acumulados."""
+    tracker = _get_login_tracker()
+    key = username.strip().lower()
+    entry = tracker.setdefault(key, {"attempts": 0, "blocked_until": None})
+    # Limpiar bloqueo expirado antes de contar
+    if entry.get("blocked_until") and datetime.datetime.now() >= entry["blocked_until"]:
+        entry["attempts"] = 0
+        entry["blocked_until"] = None
+    entry["attempts"] += 1
+    if entry["attempts"] >= _MAX_INTENTOS:
+        entry["blocked_until"] = datetime.datetime.now() + datetime.timedelta(seconds=_BLOQUEO_SEGUNDOS)
+        entry["attempts"] = 0
+    return entry["attempts"]
+
+
+def _rl_clear(username: str) -> None:
+    """Limpia el contador tras un login exitoso."""
+    _get_login_tracker().pop(username.strip().lower(), None)
 
 
 def show_login():
     styles.load_css()
     st.title("PORTAL TERRITORIAL – LOGIN")
-
-    # Inicializar contadores de rate limiting
-    if "login_intentos" not in st.session_state:
-        st.session_state["login_intentos"] = 0
-        st.session_state["login_bloqueado_hasta"] = None
-
-    ahora = datetime.datetime.now()
-    bloqueado_hasta = st.session_state.get("login_bloqueado_hasta")
-
-    if bloqueado_hasta and ahora < bloqueado_hasta:
-        restante = int((bloqueado_hasta - ahora).total_seconds())
-        st.error(f"Demasiados intentos fallidos. Intentá de nuevo en {restante} segundos.")
-        return
 
     username = st.text_input("Usuario")
     password = st.text_input("Contraseña", type="password")
@@ -93,6 +162,12 @@ def show_login():
             st.error("Completá usuario y contraseña.")
             return
 
+        # ── Chequeo de bloqueo ANTES de tocar la DB ─────────────────────────
+        bloqueado, restante = _rl_is_blocked(username)
+        if bloqueado:
+            st.error(f"Demasiados intentos fallidos. Intentá de nuevo en {restante} segundos.")
+            return
+
         try:
             user = get_user(username, password)
         except Exception:
@@ -100,19 +175,16 @@ def show_login():
             return
 
         if not user:
-            st.session_state["login_intentos"] += 1
-            intentos = st.session_state["login_intentos"]
-            if intentos >= _MAX_INTENTOS:
-                st.session_state["login_bloqueado_hasta"] = ahora + datetime.timedelta(seconds=_BLOQUEO_SEGUNDOS)
-                st.session_state["login_intentos"] = 0
+            intentos = _rl_register_failure(username)
+            bloqueado, _ = _rl_is_blocked(username)
+            if bloqueado:
                 st.error("Demasiados intentos fallidos. Acceso bloqueado por 5 minutos.")
             else:
                 restantes = _MAX_INTENTOS - intentos
                 st.error(f"Credenciales incorrectas. Intentos restantes: {restantes}")
             return
 
-        st.session_state["login_intentos"] = 0
-        st.session_state["login_bloqueado_hasta"] = None
+        _rl_clear(username)
         st.session_state["user"] = user
         st.rerun()
 
@@ -162,6 +234,15 @@ def main():
 
             st.rerun()
 
+    # ── Guard de permisos server-side ───────────────────────────────────────
+    # Doble verificación: aunque el radio button esté restringido en la UI,
+    # se valida en el servidor para que una manipulación del session_state
+    # no permita acceder a módulos fuera del scope del usuario.
+    modulos_permitidos = permisos.allowed_modules(user)
+    if modulo not in modulos_permitidos:
+        st.error("⛔ No tenés permisos para acceder a este módulo.")
+        st.stop()
+
     # Render módulo
     try:
         if modulo == "Personas":
@@ -170,6 +251,9 @@ def main():
             router_asociaciones.render(user)
         elif modulo == "Usuarios":
             session_user = st.session_state.get("user") or user
+            if not permisos.can_manage_users(session_user):
+                st.error("⛔ No tenés permisos para administrar usuarios.")
+                st.stop()
             ambito_user = permisos.get_ambito(session_user)
             requiere_original = ambito_user in ["COMUNA", "VERTICAL_PERSONAS", "VERTICAL_ASOCIACIONES"]
             if requiere_original and not session_user.get("es_original", False):
@@ -177,6 +261,9 @@ def main():
                 st.stop()
             usuarios_admin.render(session_user)
         elif modulo == "Master Global":
+            if not permisos.is_global_master(user):
+                st.error("⛔ Este módulo es exclusivo del Master Global.")
+                st.stop()
             dashboard_master_global.render(user)
         elif modulo == "Reuniones/Actividades":
             reuniones_app.render_reuniones_screen(user, get_supabase())

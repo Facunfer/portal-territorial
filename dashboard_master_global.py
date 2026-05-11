@@ -51,39 +51,54 @@ def fetch_global_data():
     """
     supabase = get_supabase()
     
+    def _cols(select_cols: str):
+        """Extrae lista de nombres de columnas desde el string 'a, b, c'."""
+        return [c.strip() for c in select_cols.split(",")]
+
     def fetch_all(table_name, select_cols):
         rows = []
         page = 0
         page_size = 1000
         while True:
-            res = supabase.table(table_name).select(select_cols).range(page * page_size, (page + 1) * page_size - 1).execute()
+            # ORDER BY id garantiza paginación determinista con offset-based range
+            res = supabase.table(table_name).select(select_cols).order("id", desc=False).range(page * page_size, (page + 1) * page_size - 1).execute()
             data = res.data or []
             rows.extend(data)
             if len(data) < page_size:
                 break
             page += 1
-        return pd.DataFrame(rows)
+        # Si no hay filas, devolver DataFrame con columnas explícitas para evitar KeyError
+        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=_cols(select_cols))
 
     # 1. Personas
     df_p = fetch_all("personas", "id, comuna_id, tags, creado_en, telefono, barrio")
-    
+
     # 2. Asociaciones
     df_a = fetch_all("asociaciones", "id, comuna_id, tipo, referente_nombre, referente_telefono")
-    
+
     # 3. Interacciones (ampliamos a 180 días para tener más margen histórico)
-    since_180 = (datetime.date.today() - datetime.timedelta(days=180)).isoformat()
+    since_180 = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
     def fetch_all_interacciones(table_name, select_cols, date_col, since_val):
         rows = []
         page = 0
         page_size = 1000
         while True:
-            res = supabase.table(table_name).select(select_cols).gte(date_col, since_val).range(page * page_size, (page + 1) * page_size - 1).execute()
+            # ORDER BY id garantiza paginación determinista — sin esto .range() devuelve
+            # filas repetidas o incompletas en páginas > 1
+            res = (
+                supabase.table(table_name)
+                .select(select_cols)
+                .gte(date_col, since_val)
+                .order("id", desc=False)
+                .range(page * page_size, (page + 1) * page_size - 1)
+                .execute()
+            )
             data = res.data or []
             rows.extend(data)
             if len(data) < page_size:
                 break
             page += 1
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows) if rows else pd.DataFrame(columns=_cols(select_cols))
 
     df_ip = fetch_all_interacciones("interacciones_personas", "id, persona_id, fecha, respuesta", "fecha", since_180)
     df_ia = fetch_all_interacciones("interacciones_asociaciones", "id, asociacion_id, fecha, respuesta", "fecha", since_180)
@@ -106,16 +121,16 @@ def _parse_tags(v):
 # COLORES Y LABELS (IDENTICOS A VISUALIZACION/KPIs)
 COLOR_MAP = {
     "POSITIVO": "#10b981", "NEUTRO": "#f59e0b", "NEGATIVO": "#ef4444", 
-    "NO CONTACTADO": "#6b7280", "NO VISITADO": "#6b7280", "NÚMERO INEXISTENTE/EQUIVOCADO": "#f97316",
-    "🟢 POSITIVO": "#10b981", "🟡 NEUTRO": "#f59e0b", "🔴 NEGATIVO": "#ef4444", 
-    "⚫ NO CONTACTADO": "#6b7280", "⚫ NO VISITADO": "#6b7280", "🟠 NÚMERO INEXISTENTE/EQUIVOCADO": "#f97316",
+    "NO CONTACTADO": "#6b7280", "NO RESPONDIÓ": "#6b7280", "NO VISITADO": "#6b7280", "NÚMERO INEXISTENTE/EQUIVOCADO": "#f97316",
+    "🟢 POSITIVO": "#10b981", "🟡 NEUTRO": "#f59e0b", "🔴 NEGATIVO": "#ef4444",
+    "⚫ NO RESPONDIÓ": "#6b7280", "⚫ NO CONTACTADO": "#6b7280", "⚫ NO VISITADO": "#6b7280", "🟠 NÚMERO INEXISTENTE/EQUIVOCADO": "#f97316",
     "🟢 <30 días": "#10b981", "🟡 30-60 días": "#f59e0b", "🔴 >60 días": "#ef4444", 
     "⚫ SIN CONTACTO": "#6b7280", "⚫ SIN VISITA": "#6b7280"
 }
 
 LABELS_TIEMPO_P = ["🟢 <30 días", "🟡 30-60 días", "🔴 >60 días", "⚫ SIN CONTACTO"]
 LABELS_TIEMPO_A = ["🟢 <30 días", "🟡 30-60 días", "🔴 >60 días", "⚫ SIN VISITA"]
-LABELS_RESP_P = ["🟢 POSITIVO", "🟡 NEUTRO", "🔴 NEGATIVO", "🟠 NÚMERO INEXISTENTE/EQUIVOCADO", "⚫ NO CONTACTADO"]
+LABELS_RESP_P = ["🟢 POSITIVO", "🟡 NEUTRO", "🔴 NEGATIVO", "🟠 NÚMERO INEXISTENTE/EQUIVOCADO", "⚫ NO RESPONDIÓ", "⚫ NO CONTACTADO"]
 LABELS_RESP_A = ["🟢 POSITIVO", "🟡 NEUTRO", "🔴 NEGATIVO", "⚫ NO VISITADO"]
 
 def _semaforo_tiempo_label(days, is_asoc=False):
@@ -131,18 +146,28 @@ def _semaforo_respuesta_label(status, is_asoc=False):
     if s == "NEUTRO": return "🟡 NEUTRO"
     if s == "NEGATIVO": return "🔴 NEGATIVO"
     if s == "NUMERO INEXISTENTE/EQUIVOCADO": return "🟠 NÚMERO INEXISTENTE/EQUIVOCADO"
-    return "⚫ NO VISITADO" if is_asoc else "⚫ NO CONTACTADO"
+    if is_asoc: return "⚫ NO VISITADO"
+    if s == "NO RESPONDIÓ": return "⚫ NO RESPONDIÓ"
+    return "⚫ NO CONTACTADO"
+
+def _norm_comuna(val) -> str:
+    """Normaliza un valor de comuna_id a string entero, tolerante a float ('1.0' → '1')."""
+    try:
+        return str(int(float(val)))
+    except (ValueError, TypeError):
+        return ""
+
 
 def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
-    f_comunas = filters.get("comunas", [])
-    f_barrios = filters.get("barrios", [])
-    f_tags = filters.get("tags", [])
-    f_tipo = filters.get("tipo")
-    f_fechas = filters.get("fechas", [])
+    f_comunas    = filters.get("comunas", [])
+    f_barrios    = filters.get("barrios", [])
+    f_tags       = filters.get("tags", [])
+    f_fechas     = filters.get("fechas", [])
     f_verticales = filters.get("verticales", [])
-    
+    f_tipo_asoc  = filters.get("tipo_asoc", [])
+
     p, a, ip, ia, r = df_p.copy(), df_a.copy(), df_ip.copy(), df_ia.copy(), df_r.copy()
-    
+
     # 1. Filtro de Fechas
     if len(f_fechas) == 2:
         start_date, end_date = f_fechas
@@ -158,30 +183,29 @@ def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
 
     # 2. Filtro Comuna (Multiselect)
     if f_comunas:
-        str_comunas = [str(c) for c in f_comunas]
-        p = p[p['comuna_id'].astype(str).isin(str_comunas)]
-        a = a[a['comuna_id'].astype(str).isin(str_comunas)]
-        
-        # Filtro Reuniones Por Comuna
+        # Normalizamos a entero-string para tolerar float64 de pandas ('1.0' → '1')
+        str_comunas = [str(int(c)) for c in f_comunas]
+        p = p[p['comuna_id'].apply(_norm_comuna).isin(str_comunas)]
+        a = a[a['comuna_id'].apply(_norm_comuna).isin(str_comunas)]
+
+        # Reuniones de esas comunas + todas las de scope VERTICAL/GLOBAL (no tienen comarca)
         if not r.empty:
-             r = r[ (r['scope_tipo'] == "COMUNA") & (r['scope_valor'].astype(str).isin(str_comunas)) ]
-        
+            r_comunas = r[(r['scope_tipo'] == "COMUNA") & (r['scope_valor'].astype(str).isin(str_comunas))]
+            r_no_comunas = r[r['scope_tipo'] != "COMUNA"]
+            r = pd.concat([r_comunas, r_no_comunas], ignore_index=True)
+
         # Propagar a interacciones
         p_ids, a_ids = set(p['id'].tolist()), set(a['id'].tolist())
         ip = ip[ip['persona_id'].isin(p_ids)]
         ia = ia[ia['asociacion_id'].isin(a_ids)]
-    else:
-        # Si NO filtra comunas, para reuniones igual solo mostramos las de tipo COMUNA para el grafico "por comuna"
-        if not r.empty:
-             r = r[r['scope_tipo'] == "COMUNA"]
-    
+    # else: sin filtro de comunas → todas las reuniones visibles (incluye VERTICAL y GLOBAL)
+
     # 2b. Filtro Barrio (Multiselect)
     if f_barrios:
         p = p[p['barrio'].isin(f_barrios)]
-        # Para asociaciones, asumimos que tambien tienen barrio, si no existe la columna en df_a, fallara o se ignorara si no la trajimos
         if 'barrio' in a.columns:
             a = a[a['barrio'].isin(f_barrios)]
-            
+
         # Propagar a interacciones
         p_ids, a_ids = set(p['id'].tolist()), set(a['id'].tolist())
         ip = ip[ip['persona_id'].isin(p_ids)]
@@ -190,20 +214,13 @@ def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
     # 3. Filtro Vertical Personas (Tags - Multiselect)
     if f_tags:
         # OR Logic: Si tiene al menos uno de los tags seleccionados
-        # Normalizamos a upper en el filtro tambien por seguridad
         f_tags_upper = [t.upper() for t in f_tags]
         p['tag_list'] = p['tags'].apply(_parse_tags)
         p = p[p['tag_list'].apply(lambda x: any(t in x for t in f_tags_upper))]
         p_ids = set(p['id'].tolist())
         ip = ip[ip['persona_id'].isin(p_ids)]
-        
-    # 4. Filtro Vertical Asociaciones (Tipo)
-    if f_tipo != "Todos":
-        a = a[a['tipo'] == f_tipo]
-        a_ids = set(a['id'].tolist())
-        ia = ia[ia['asociacion_id'].isin(a_ids)]
 
-    # 5. Filtro Vertical de Segmento (afecta personas por tag Y asociaciones por tipo)
+    # 4. Filtro Vertical de Segmento (afecta personas por tag, asociaciones por tipo Y reuniones por scope_valor)
     if f_verticales:
         # Tags de personas que corresponden a las verticales seleccionadas
         tags_verticales = {
@@ -218,18 +235,44 @@ def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
             if VERTICAL_TIPO_MAP.get(v)
         }
 
+        # Personas: filtrar por tag si la vertical tiene mapeo
         if tags_verticales and not p.empty:
             tags_upper = {t.upper() for t in tags_verticales}
             p['_tag_list'] = p['tags'].apply(_parse_tags)
             p = p[p['_tag_list'].apply(lambda x: any(t in x for t in tags_upper))].copy()
             p.drop(columns=['_tag_list'], inplace=True)
-            p_ids = set(p['id'].tolist())
-            ip = ip[ip['persona_id'].isin(p_ids)]
+        elif not tags_verticales:
+            # Vertical sin mapeo de personas → personas = 0
+            p = p.head(0).copy()
+        p_ids = set(p['id'].tolist())
+        ip = ip[ip['persona_id'].isin(p_ids)]
 
-        if tipos_verticales and not a.empty:
-            a = a[a['tipo'].isin(tipos_verticales)].copy()
-            a_ids = set(a['id'].tolist())
-            ia = ia[ia['asociacion_id'].isin(a_ids)]
+        # Asociaciones: filtrar por tipo si la vertical tiene mapeo, si no → asociaciones = 0
+        if not a.empty:
+            if tipos_verticales:
+                a = a[a['tipo'].isin(tipos_verticales)].copy()
+            else:
+                # Vertical sin mapeo de asociaciones (ej. Generación Plateada) → asociaciones = 0
+                a = a.head(0).copy()
+        a_ids = set(a['id'].tolist())
+        ia = ia[ia['asociacion_id'].isin(a_ids)]
+
+        # Reuniones: scope_tipo=VERTICAL con scope_valor en las verticales seleccionadas
+        if not r.empty:
+            r = r[(r['scope_tipo'] == "VERTICAL") & (r['scope_valor'].isin(f_verticales))].copy()
+
+    # 5. Filtro directo por Tipo de Asociación (multiselect independiente)
+    #    Al filtrar solo por tipo de asociación (sin vertical), personas = 0
+    #    porque no hay relación directa persona ↔ tipo de asociación
+    if f_tipo_asoc:
+        if not a.empty:
+            a = a[a['tipo'].isin(f_tipo_asoc)].copy()
+        a_ids = set(a['id'].tolist())
+        ia = ia[ia['asociacion_id'].isin(a_ids)]
+        if not f_verticales:
+            # Sin vertical activa, las personas no tienen contexto en este filtro
+            p = p.head(0).copy()
+            ip = ip.head(0).copy()
 
     return p, a, ip, ia, r
     
@@ -257,32 +300,31 @@ def render_dashboard_master_global(user):
     with st.expander("🎯 Filtros Globales y Drill-down", expanded=True):
         fcol1, fcol2, fcol3 = st.columns([1, 1, 1])
         
-        comunas_available = sorted([int(x) for x in df_p_raw['comuna_id'].dropna().unique() if str(x).isdigit()])
-        
+        # Comunas disponibles: tolerante a float64 de pandas (1.0 → 1)
+        comunas_available = sorted(set(
+            int(float(x)) for x in df_p_raw['comuna_id'].dropna().unique()
+            if str(x) not in ('', 'nan', 'None')
+        ))
+
         with fcol1:
             f_comunas = st.multiselect("Comunas (Vacío = Todas)", options=comunas_available)
-            
+
             # Filtro de Barrios
-            # Obtenemos todos los barrios unicos de ambas tablas
             barrios_p = set(df_p_raw['barrio'].dropna().unique())
             barrios_a = set(df_a_raw['barrio'].dropna().unique()) if 'barrio' in df_a_raw.columns else set()
             all_barrios = sorted(list(barrios_p.union(barrios_a)))
-            
-            # Si hay comunas seleccionadas, podriamos filtrar los barrios disponibles si tuvieramos el mapeo exacto o usando la data
-            # Por simplicidad y consistencia con datos reales, filtramos las opciones usando los datos filtrados por comuna (si quisieramos ser estrictos)
-            # Pero para UX rapida, mostramos todos O filtramos si hay comuna.
-            # Vamos a filtrar opciones si hay comunas seleccionadas usando el DF raw
+
+            # Si hay comunas seleccionadas, reducir opciones de barrios usando la misma normalización
             if f_comunas:
-                str_comunas = [str(c) for c in f_comunas]
-                df_p_filt = df_p_raw[df_p_raw['comuna_id'].astype(str).isin(str_comunas)]
-                # Para df_a tambien si tiene barrio
+                str_comunas_norm = [str(int(c)) for c in f_comunas]
+                df_p_filt = df_p_raw[df_p_raw['comuna_id'].apply(_norm_comuna).isin(str_comunas_norm)]
                 barrios_p_filt = set(df_p_filt['barrio'].dropna().unique())
                 barrios_a_filt = set()
                 if 'barrio' in df_a_raw.columns:
-                     df_a_filt = df_a_raw[df_a_raw['comuna_id'].astype(str).isin(str_comunas)]
-                     barrios_a_filt = set(df_a_filt['barrio'].dropna().unique())
+                    df_a_filt = df_a_raw[df_a_raw['comuna_id'].apply(_norm_comuna).isin(str_comunas_norm)]
+                    barrios_a_filt = set(df_a_filt['barrio'].dropna().unique())
                 all_barrios = sorted(list(barrios_p_filt.union(barrios_a_filt)))
-            
+
             f_barrios = st.multiselect("Barrios", options=all_barrios)
         
         with fcol2:
@@ -302,13 +344,13 @@ def render_dashboard_master_global(user):
 
         with fcol3:
             tipos_available = sorted([str(x) for x in df_a_raw['tipo'].dropna().unique()])
-            f_tipo = st.selectbox("Vertical (Asociaciones)", ["Todos"] + tipos_available)
+            f_tipo_asoc = st.multiselect("Tipo de Asociación", options=tipos_available)
 
             today = datetime.date.today()
             def_start = today - datetime.timedelta(days=30)
             f_fechas = st.date_input("Rango de Interacciones", value=(def_start, today))
 
-    filters = {"comunas": f_comunas, "barrios": f_barrios, "tags": f_tags, "tipo": f_tipo, "fechas": f_fechas, "verticales": f_verticales}
+    filters = {"comunas": f_comunas, "barrios": f_barrios, "tags": f_tags, "fechas": f_fechas, "verticales": f_verticales, "tipo_asoc": f_tipo_asoc}
     p, a, ip, ia, r = filter_data(df_p_raw, df_a_raw, df_ip_raw, df_ia_raw, df_r_raw, filters)
 
     # --- ENRIQUECIMIENTO GLOBAL (Comuna IDs) ---
@@ -354,47 +396,7 @@ def render_dashboard_master_global(user):
     ])
 
     with tab_territorio:
-        # --- PARTE 1: DENSIDAD Y CARGA ---
-        st.subheader("Carga y Actividad por Comuna")
-        
-        # Agregación base para ranking
-        p_by_c = p.groupby('comuna_id').size().reset_index(name='Personas')
-        a_by_c = a.groupby('comuna_id').size().reset_index(name='Asociaciones')
-        
-        ranking_comuna = pd.DataFrame({'comuna_id': range(1, 16)})
-        ranking_comuna = ranking_comuna.merge(p_by_c, on='comuna_id', how='left').merge(a_by_c, on='comuna_id', how='left').fillna(0)
-        
-        # Usamos ip/ia ya enriquecidos
-        int_by_c = pd.concat([
-            ip.groupby('comuna_id').size().reset_index(name='Int'),
-            ia.groupby('comuna_id').size().reset_index(name='Int')
-        ]).groupby('comuna_id').sum().reset_index() if not (ip.empty and ia.empty) else pd.DataFrame(columns=['comuna_id', 'Int'])
-        
-        ranking_comuna = ranking_comuna.merge(int_by_c, on='comuna_id', how='left').fillna(0)
-        ranking_comuna = ranking_comuna.rename(columns={'Int': 'Interacciones'})
-
-        # Si hay filtro de comunas, filtramos el ranking también
-        if f_comunas:
-            ranking_comuna = ranking_comuna[ranking_comuna['comuna_id'].isin(f_comunas)]
-
-        col_rank1, col_rank2 = st.columns([2, 1])
-        with col_rank1:
-            fig_den = px.bar(ranking_comuna, x='comuna_id', y=['Personas', 'Asociaciones'], title="Densidad de Carga", barmode='group')
-            fig_den.update_layout(xaxis={'type':'category'})
-            st.plotly_chart(fig_den, use_container_width=True)
-        with col_rank2:
-            st.write("**Detalle Territorial (Ranking)**")
-            st.dataframe(
-                ranking_comuna.sort_values('Personas', ascending=False).style.background_gradient(
-                    cmap='Blues', subset=['Personas', 'Asociaciones', 'Interacciones']
-                ), 
-                use_container_width=True, 
-                hide_index=True
-            )
-
-        st.markdown("---")
-        
-        # --- PARTE 2: SEMÁFOROS (Asegurando match con Visualización) ---
+        # --- SEMÁFOROS (Calidad de Contacto) ---
         st.subheader("Semáforos de Gestión (Calidad de Contacto)")
         
         def _semaforos_ui(df, title_suffix, is_asoc=False):
@@ -479,11 +481,11 @@ def render_dashboard_master_global(user):
             r_graph = r.copy()
             r_graph['fecha_dt'] = pd.to_datetime(r_graph['fecha']).dt.date
             
-            # Agrupar por fecha y comuna
-            r_counts = r_graph.groupby(['fecha_dt', 'scope_valor']).size().reset_index(name='Cant')
-            r_counts = r_counts.rename(columns={'scope_valor': 'Comuna'})
-            
-            fig_r = px.line(r_counts, x='fecha_dt', y='Cant', color='Comuna', title="Reuniones por Comuna (Evolución)", markers=True)
+            # Agrupar por fecha y ámbito (puede ser comuna o vertical)
+            r_counts = r_graph.groupby(['fecha_dt', 'scope_tipo', 'scope_valor']).size().reset_index(name='Cant')
+            r_counts['Ámbito'] = r_counts['scope_tipo'] + ": " + r_counts['scope_valor'].astype(str)
+
+            fig_r = px.line(r_counts, x='fecha_dt', y='Cant', color='Ámbito', title="Reuniones por Ámbito (Evolución)", markers=True)
             st.plotly_chart(fig_r, use_container_width=True)
             
             with st.expander("Ver detalle de reuniones"):
@@ -504,13 +506,6 @@ def render_dashboard_master_global(user):
                 p_growth = p.groupby('creado_dt').size().reset_index(name='Altas')
                 st.plotly_chart(px.area(p_growth, x='creado_dt', y='Altas', title="Nuevas Personas", color_discrete_sequence=['#10b981']), use_container_width=True)
 
-            st.markdown("#### 🚩 Alertas de Gestión")
-            alertas = []
-            avg_p = total / (len(f_comunas) if f_comunas else 15)
-            low_c = ranking_comuna[ranking_comuna['Personas'] < (avg_p*0.5)]['comuna_id'].tolist()
-            if low_c: alertas.append({"Prioridad":"Alta", "Modulo":"Territorio", "Desc": f"Carga bajísima en: {low_c}"})
-            if alertas: st.table(pd.DataFrame(alertas))
-            else: st.success("Todo en orden.")
 
     st.sidebar.markdown("---")
     st.sidebar.caption(f"Actualizado: {datetime.datetime.now().strftime('%H:%M')}")

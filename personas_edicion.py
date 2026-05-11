@@ -34,7 +34,7 @@ TAGS_SUGERIDOS = [
     "CULTURA",
 ]
 
-RESPUESTAS = ["POSITIVO", "NEUTRO", "NEGATIVO", "NO CONTACTADO", "NUMERO INEXISTENTE/EQUIVOCADO"]
+RESPUESTAS = ["POSITIVO", "NEUTRO", "NEGATIVO", "NO RESPONDIÓ", "NUMERO INEXISTENTE/EQUIVOCADO"]
 MEDIOS = ["WhatsApp", "Llamada", "Instagram", "Facebook", "Email", "Presencial", "Otro"]
 
 SEGUIMIENTO_ESTADOS = ["pendiente", "hecho", "cancelado"]
@@ -130,6 +130,11 @@ def _norm_status(s):
     if s is None:
         return "NO CONTACTADO"
     up = str(s).strip().upper()
+    # Ambos son estados válidos con significado distinto:
+    # NO CONTACTADO = nunca se intentó contactar (estado inicial)
+    # NO RESPONDIÓ  = se intentó contactar pero no respondió (respuesta de interacción)
+    if up in ("NO CONTACTADO", "NO RESPONDIÓ"):
+        return up
     return up if up in RESPUESTAS else "NO CONTACTADO"
 
 
@@ -143,6 +148,8 @@ def _semaforo_respuesta_badge(status):
         return "🔴 NEGATIVO"
     if s == "NUMERO INEXISTENTE/EQUIVOCADO":
         return "🟠 NÚMERO INEXISTENTE/EQUIVOCADO"
+    if s == "NO RESPONDIÓ":
+        return "⚫ NO RESPONDIÓ"
     return "⚫ NO CONTACTADO"
 
 
@@ -414,9 +421,32 @@ def update_persona(persona_id: int, payload: dict):
     supabase.table("personas").update(payload).eq("id", int(persona_id)).execute()
 
 
+def _clear_interacciones_cache():
+    """Invalida solo las cachés afectadas por una nueva interacción."""
+    import logging
+    _log = logging.getLogger(__name__)
+
+    try:
+        from personas_app import get_interacciones_resumen
+        get_interacciones_resumen.clear()
+    except Exception as e:
+        _log.warning(f"_clear_interacciones_cache: no se pudo limpiar get_interacciones_resumen: {e}")
+    try:
+        from kpis_app import fetch_kpis_data
+        fetch_kpis_data.clear()
+    except Exception as e:
+        _log.warning(f"_clear_interacciones_cache: no se pudo limpiar fetch_kpis_data: {e}")
+    try:
+        from dashboard_master_global import fetch_global_data
+        fetch_global_data.clear()
+    except Exception as e:
+        _log.warning(f"_clear_interacciones_cache: no se pudo limpiar fetch_global_data: {e}")
+
+
 def insert_interaccion(payload: dict):
     supabase = get_supabase()
     supabase.table("interacciones_personas").insert(payload).execute()
+    _clear_interacciones_cache()
 
 
 def insert_interacciones_bulk(payloads: list):
@@ -425,6 +455,7 @@ def insert_interacciones_bulk(payloads: list):
         return
     supabase = get_supabase()
     supabase.table("interacciones_personas").insert(payloads).execute()
+    _clear_interacciones_cache()
 
 
 def get_users_same_comuna(user):
@@ -642,7 +673,7 @@ def render_ficha_persona(user, persona_id: int):
     if st.session_state[edit_key]:
         st.markdown("### ✏️ Editar datos de la persona")
 
-        comuna_actual = int(persona.get("comuna_id") or 0) if str(persona.get("comuna_id") or "").strip() else 0
+        comuna_actual = int(float(persona.get("comuna_id") or 0)) if str(persona.get("comuna_id") or "").strip() else 0
         comunas = list(range(1, 16))
         comuna_index = comunas.index(comuna_actual) if comuna_actual in comunas else 0
         comuna_nueva = st.selectbox("Comuna", comunas, index=comuna_index, key=f"edit_comuna_{persona_id}")
@@ -685,7 +716,7 @@ def render_ficha_persona(user, persona_id: int):
 
             edad = st.number_input(
                 "Edad", min_value=0, max_value=120,
-                value=int(persona.get("edad") or 0),
+                value=int(float(persona.get("edad") or 0)),
                 key=f"edit_edad_{persona_id}"
             )
 

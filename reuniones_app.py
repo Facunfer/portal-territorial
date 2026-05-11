@@ -12,6 +12,12 @@ from constants import VERTICALES_SEGMENTOS
 # =========================
 TIPOS_ACTIVIDAD = [
     "Reunión",
+    "Caminata",
+    "Charla",
+    "Otro",
+]
+
+SUBTIPOS_REUNION = [
     "Reunión de Comuna",
     "Reunión de Vecinos",
     "Reunión de Comerciantes",
@@ -21,7 +27,6 @@ TIPOS_ACTIVIDAD = [
     "Reunión de Educación",
     "Reunión de Salud",
     "Reunión de Culto",
-    "Caminata",
 ]
 
 def get_reuniones_scope(user: dict):
@@ -75,15 +80,26 @@ def fetch_reuniones(supabase, user_ctx: dict, filters: dict = None):
         if filters.get("tipo") and filters["tipo"] != "Todos":
             q = q.eq("tipo", filters["tipo"])
         if filters.get("search"):
+            # Escapar caracteres especiales de PostgREST antes de interpolar
             search = filters["search"].strip()
-            # Or query for titulo/descripcion
-            q = q.or_(f"titulo.ilike.%{search}%,descripcion.ilike.%{search}%")
+            search_safe = search.replace("\\", "").replace(",", "").replace("%", r"\%")
+            if search_safe:
+                q = q.or_(f"titulo.ilike.%{search_safe}%,descripcion.ilike.%{search_safe}%")
 
         if filters.get("solo_programadas"):
             q = q.is_("realizada", "null")
 
-    res = q.order("fecha", desc=True).order("created_at", desc=True).limit(500).execute()
-    df = pd.DataFrame(res.data or [])
+    # Paginación completa — sin límite fijo de 500
+    rows, page, page_size = [], 0, 1000
+    q_ordered = q.order("fecha", desc=True).order("created_at", desc=True)
+    while True:
+        res = q_ordered.range(page * page_size, (page + 1) * page_size - 1).execute()
+        data = res.data or []
+        rows.extend(data)
+        if len(data) < page_size:
+            break
+        page += 1
+    df = pd.DataFrame(rows)
 
     if filters and filters.get("solo_historial") and not df.empty:
         hoy_str = str(datetime.date.today())
@@ -116,18 +132,22 @@ def fetch_personas_para_reunion(supabase, user):
 def insert_reunion(supabase, user: dict, data: dict, asistentes_ids: list = None):
     """Inserta una nueva reunión calculando el scope automáticamente."""
     scope_tipo, scope_valor = get_reuniones_scope(user)
-    
+
+    hora_val = data.get("hora")
+    hora_str = hora_val.strftime("%H:%M:%S") if hora_val else None
+
     payload = {
         "created_by_user_id": user.get("id"),
         "created_by_nombre": user.get("username"),
         "scope_tipo": scope_tipo,
         "scope_valor": scope_valor,
         "fecha": str(data["fecha"]),
+        "hora": hora_str,
         "tipo": data["tipo"],
+        "subtipo_reunion": data.get("subtipo_reunion"),
         "titulo": data["titulo"],
         "descripcion": data.get("descripcion"),
         "lugar": data.get("lugar"),
-        "necesita_cobertura": data.get("necesita_cobertura", False),
         "realizada": data.get("realizada"),
     }
     
@@ -210,94 +230,127 @@ def render_reuniones_screen(user: dict, supabase):
     # =========================
     if not es_segmentos:
       with st.expander("➕ Cargar nueva actividad", expanded=False):
-        # --- Selector de Asistentes (FUERA del form para interactividad) ---
-        st.markdown("#### 👥 Asistentes")
-        
+
         if "reunion_form_key" not in st.session_state:
             st.session_state["reunion_form_key"] = 0
 
-        df_personas_visible = fetch_personas_para_reunion(supabase, user)
-        # Filtro rápido
-        search_rapido = st.text_input("Filtrar rápido asistentes (Nombre, DNI, Teléfono...)", key=f"tbl_search_{st.session_state['reunion_form_key']}")
-        if search_rapido and not df_personas_visible.empty:
-            df_personas_visible = df_personas_visible[
-                df_personas_visible["nombre_apellido"].fillna("").str.contains(search_rapido, case=False) |
-                df_personas_visible["dni"].fillna("").astype(str).str.contains(search_rapido) |
-                df_personas_visible["telefono"].fillna("").astype(str).str.contains(search_rapido)
-            ]
+        fkey = st.session_state["reunion_form_key"]
 
-        selected_asistentes_ids = []
-        if not df_personas_visible.empty:
-            gb = GridOptionsBuilder.from_dataframe(df_personas_visible)
-            gb.configure_default_column(sortable=True, filter=True, resizable=True)
-            first_col = df_personas_visible.columns[0]
-            gb.configure_column(first_col, checkboxSelection=True, headerCheckboxSelection=True)
-            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-            gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
-            grid_options = gb.build()
-
-            grid_response = AgGrid(
-                df_personas_visible,
-                gridOptions=grid_options,
-                update_mode=GridUpdateMode.SELECTION_CHANGED,
-                theme="streamlit",
-                height=400,
-                fit_columns_on_grid_load=True,
-                key=f"grid_reunion_asist_{st.session_state['reunion_form_key']}"
+        # --- Tipo de actividad (FUERA del form para condicional subtipo) ---
+        tipo = st.selectbox(
+            "Tipo de actividad *",
+            TIPOS_ACTIVIDAD,
+            key=f"tipo_act_{fkey}"
+        )
+        subtipo_reunion = None
+        if tipo == "Reunión":
+            subtipo_reunion = st.selectbox(
+                "Tipo de Reunión *",
+                SUBTIPOS_REUNION,
+                key=f"subtipo_act_{fkey}"
             )
 
-            selected_rows = grid_response.get("selected_rows", [])
-            # AgGrid returns a dataframe under "selected_rows" in some versions, or list in others
-            if isinstance(selected_rows, list):
-                selected_asistentes_ids = [int(r["id"]) for r in selected_rows if r.get("id")]
-            elif isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
-                selected_asistentes_ids = [int(r["id"]) for _, r in selected_rows.iterrows() if r.get("id") is not None]
-
-        st.caption(f"Asistentes seleccionados: {len(selected_asistentes_ids)}")
         st.markdown("---")
 
+        # --- Selector de Asistentes (desplegable opcional) ---
+        mostrar_asistentes = st.checkbox(
+            "👥 Seleccionar Asistentes",
+            value=False,
+            key=f"toggle_asist_{fkey}"
+        )
+
+        selected_asistentes_ids = []
+        if mostrar_asistentes:
+            df_personas_visible = fetch_personas_para_reunion(supabase, user)
+            search_rapido = st.text_input(
+                "Filtrar rápido (Nombre, DNI, Teléfono...)",
+                key=f"tbl_search_{fkey}"
+            )
+            if search_rapido and not df_personas_visible.empty:
+                df_personas_visible = df_personas_visible[
+                    df_personas_visible["nombre_apellido"].fillna("").str.contains(search_rapido, case=False) |
+                    df_personas_visible["dni"].fillna("").astype(str).str.contains(search_rapido) |
+                    df_personas_visible["telefono"].fillna("").astype(str).str.contains(search_rapido)
+                ]
+
+            if not df_personas_visible.empty:
+                gb = GridOptionsBuilder.from_dataframe(df_personas_visible)
+                gb.configure_default_column(sortable=True, filter=True, resizable=True)
+                first_col = df_personas_visible.columns[0]
+                gb.configure_column(first_col, checkboxSelection=True, headerCheckboxSelection=True)
+                gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+                gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=20)
+                grid_options = gb.build()
+
+                grid_response = AgGrid(
+                    df_personas_visible,
+                    gridOptions=grid_options,
+                    update_mode=GridUpdateMode.SELECTION_CHANGED,
+                    theme="streamlit",
+                    height=350,
+                    fit_columns_on_grid_load=True,
+                    key=f"grid_reunion_asist_{fkey}"
+                )
+
+                selected_rows = grid_response.get("selected_rows", [])
+                if isinstance(selected_rows, list):
+                    selected_asistentes_ids = [int(r["id"]) for r in selected_rows if r.get("id")]
+                elif isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
+                    selected_asistentes_ids = [int(r["id"]) for _, r in selected_rows.iterrows() if r.get("id") is not None]
+
+            st.caption(f"Asistentes seleccionados: {len(selected_asistentes_ids)}")
+            st.markdown("---")
+
+        # --- Formulario principal ---
         with st.form("form_nueva_reunion", clear_on_submit=True):
             c1, c2 = st.columns(2)
             with c1:
                 fecha = st.date_input("Fecha *", value=datetime.date.today())
-                tipo = st.selectbox("Tipo de actividad *", TIPOS_ACTIVIDAD)
+                hora  = st.time_input("Hora *", value=datetime.time(10, 0))
+                lugar = st.text_input("Lugar *", placeholder="Ej: Club Social Comuna 1")
                 titulo = st.text_input("Título / Tema (Opcional)", placeholder="Ej: Mesa de trabajo Jóvenes")
-                lugar = st.text_input("Lugar (Opcional)", placeholder="Ej: Club Social Comuna 1")
-                
             with c2:
-                necesita_cobertura = st.checkbox("Necesita cobertura", value=False)
-                descripcion = st.text_area("Descripción / Notas", placeholder="Resumen de lo hablado...", height=150)
-            
+                descripcion = st.text_area("Descripción / Notas", placeholder="Resumen de lo hablado...", height=180)
+
             submit = st.form_submit_button("✅ Guardar actividad", use_container_width=True)
-            
+
             if submit:
-                try:
-                    hoy = datetime.date.today()
-                    es_pasada = fecha < hoy
-                    
-                    insert_reunion(supabase, user, {
-                        "fecha": fecha,
-                        "tipo": tipo,
-                        "titulo": titulo.strip() if titulo.strip() else f"{tipo}",
-                        "descripcion": descripcion,
-                        "lugar": lugar,
-                        "necesita_cobertura": necesita_cobertura,
-                        "realizada": True if es_pasada else None,
-                    }, asistentes_ids=selected_asistentes_ids)  # Pasamos los asistentes
-                    
-                    if es_pasada:
-                        st.success("¡Actividad guardada en el historial!")
-                    else:
-                        st.success("¡Actividad programada correctamente!")
-                    
-                    # Reset multiselect and search by changing key
-                    st.session_state["reunion_form_key"] += 1
-                    st.session_state["reunion_asistentes_opts"] = {}
-                    
-                    st.balloons()
-                    st.rerun() # Force rerun to update UI with new empty widget
-                except Exception as e:
-                    st.error(f"Error al guardar: {e}")
+                # Validación de obligatorios
+                errores = []
+                if not lugar.strip():
+                    errores.append("El campo **Lugar** es obligatorio.")
+                if tipo == "Reunión" and not subtipo_reunion:
+                    errores.append("Seleccioná el **Tipo de Reunión**.")
+
+                if errores:
+                    for e in errores:
+                        st.error(e)
+                else:
+                    try:
+                        hoy = datetime.date.today()
+                        es_pasada = fecha < hoy
+
+                        insert_reunion(supabase, user, {
+                            "fecha":           fecha,
+                            "hora":            hora,
+                            "tipo":            tipo,
+                            "subtipo_reunion": subtipo_reunion,
+                            "titulo":          titulo.strip() if titulo.strip() else (subtipo_reunion or tipo),
+                            "descripcion":     descripcion,
+                            "lugar":           lugar.strip(),
+                            "realizada":       True if es_pasada else None,
+                        }, asistentes_ids=selected_asistentes_ids)
+
+                        if es_pasada:
+                            st.success("¡Actividad guardada en el historial!")
+                        else:
+                            st.success("¡Actividad programada correctamente!")
+
+                        st.session_state["reunion_form_key"] += 1
+                        st.balloons()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
 
     st.markdown("---")
 
@@ -342,12 +395,13 @@ def render_reuniones_screen(user: dict, supabase):
                 with st.container(border=True):
                     c1, c2, c3 = st.columns([3, 1, 1])
                     with c1:
-                        st.markdown(f"**{row['fecha']}** — {row['tipo']}")
+                        hora_str = str(row['hora'])[:5] if row.get('hora') else ""
+                        tipo_label = row.get('subtipo_reunion') or row['tipo']
+                        fecha_hora = f"**{row['fecha']}**" + (f" — {hora_str}" if hora_str else "")
+                        st.markdown(f"{fecha_hora} — {tipo_label}")
                         st.markdown(f"_{row['titulo'] or 'Sin título'}_")
                         if row.get('lugar'):
                             st.caption(f"📍 {row['lugar']}")
-                        if row.get('necesita_cobertura'):
-                            st.caption("📸 Necesita cobertura")
                         if es_segmentos:
                             st.caption(f"🏷️ {_scope_label(row.get('scope_tipo'), row.get('scope_valor'))}")
                     with c2:
@@ -422,36 +476,43 @@ def render_reuniones_screen(user: dict, supabase):
                 )
 
             # Tabla
-            cols_to_show = ["fecha", "tipo", "titulo", "lugar", "necesita_cobertura", "created_by_nombre"]
+            cols_to_show = ["fecha", "hora", "tipo", "subtipo_reunion", "titulo", "lugar", "created_by_nombre"]
             if es_segmentos:
                 cols_to_show.insert(2, "segmento")
             cols_to_show = [c for c in cols_to_show if c in df_hist.columns]
 
             cols_map = {
                 "fecha": "Fecha",
+                "hora": "Hora",
                 "segmento": "Segmento",
                 "tipo": "Tipo",
+                "subtipo_reunion": "Subtipo",
                 "titulo": "Tema",
                 "lugar": "Lugar",
-                "necesita_cobertura": "Cobertura",
                 "created_by_nombre": "Creado por",
             }
 
             df_display = df_hist[cols_to_show].rename(columns=cols_map)
 
-            if "Cobertura" in df_display.columns:
-                df_display["Cobertura"] = df_display["Cobertura"].apply(lambda x: "Sí" if x else "No")
+            # Formatear hora: mostrar solo HH:MM
+            if "Hora" in df_display.columns:
+                df_display["Hora"] = df_display["Hora"].apply(
+                    lambda x: str(x)[:5] if pd.notna(x) and x else ""
+                )
 
             st.dataframe(df_display, use_container_width=True, hide_index=True)
 
             # Detalles expandibles
             if st.checkbox("Ver descripciones desarrolladas", key="hist_descripciones"):
                 for idx, row in df_hist.iterrows():
+                    hora_str = str(row['hora'])[:5] if row.get('hora') else "-"
+                    subtipo_str = row.get('subtipo_reunion') or "-"
                     with st.expander(f"{row['fecha']} - {row['titulo']} ({row['tipo']})"):
                         if es_segmentos:
                             st.caption(f"🏷️ {_scope_label(row.get('scope_tipo'), row.get('scope_valor'))}")
+                        st.write(f"**Hora:** {hora_str}")
+                        st.write(f"**Subtipo:** {subtipo_str}")
                         st.write(f"**Lugar:** {row.get('lugar') or '-'}")
-                        st.write(f"**Cobertura:** {'Sí' if row.get('necesita_cobertura') else 'No'}")
                         st.write(f"**Descripción:**")
                         st.write(row.get("descripcion") or "_Sin notas_")
                         st.caption(f"ID: {row['id']} | Cargado por: {row.get('created_by_nombre','-')} el {row.get('created_at','-')}")

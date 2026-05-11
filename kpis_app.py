@@ -15,12 +15,14 @@ COLOR_MAP = {
     "NEUTRO": "#f59e0b",
     "NEGATIVO": "#ef4444",
     "NO CONTACTADO": "#6b7280",
+    "NO RESPONDIÓ": "#6b7280",
     "NO VISITADO": "#6b7280",
     "NÚMERO INEXISTENTE/EQUIVOCADO": "#f97316",
     "🟢 POSITIVO": "#10b981",
     "🟡 NEUTRO": "#f59e0b",
     "🔴 NEGATIVO": "#ef4444",
     "⚫ NO CONTACTADO": "#6b7280",
+    "⚫ NO RESPONDIÓ": "#6b7280",
     "⚫ NO VISITADO": "#6b7280",
     "🟠 NÚMERO INEXISTENTE/EQUIVOCADO": "#f97316",
     "🟢 <30 días": "#10b981",
@@ -32,7 +34,7 @@ COLOR_MAP = {
 
 # CONSTANTES DE ORDENAMIENTO
 ORDEN_TIEMPO_PERSONAS = ["🟢 <30 días", "🟡 30-60 días", "🔴 >60 días", "⚫ SIN CONTACTO"]
-ORDEN_RESPUESTA_PERSONAS = ["🟢 POSITIVO", "🟡 NEUTRO", "🔴 NEGATIVO", "🟠 NÚMERO INEXISTENTE/EQUIVOCADO", "⚫ NO CONTACTADO"]
+ORDEN_RESPUESTA_PERSONAS = ["🟢 POSITIVO", "🟡 NEUTRO", "🔴 NEGATIVO", "🟠 NÚMERO INEXISTENTE/EQUIVOCADO", "⚫ NO RESPONDIÓ", "⚫ NO CONTACTADO"]
 
 ORDEN_TIEMPO_ASOC = ["🟢 <30 días", "🟡 30-60 días", "🔴 >60 días", "⚫ SIN VISITA"]
 ORDEN_RESPUESTA_ASOC = ["🟢 POSITIVO", "🟡 NEUTRO", "🔴 NEGATIVO", "⚫ NO VISITADO"]
@@ -54,28 +56,47 @@ def _semaforo_respuesta_label(status, is_asoc=False):
     if s == "NEUTRO": return "🟡 NEUTRO"
     if s == "NEGATIVO": return "🔴 NEGATIVO"
     if s == "NUMERO INEXISTENTE/EQUIVOCADO": return "🟠 NÚMERO INEXISTENTE/EQUIVOCADO"
-    return "⚫ NO VISITADO" if is_asoc else "⚫ NO CONTACTADO"
+    if is_asoc: return "⚫ NO VISITADO"
+    if s == "NO RESPONDIÓ": return "⚫ NO RESPONDIÓ"
+    return "⚫ NO CONTACTADO"
 
 # =========================
 # HELPERS DE DATA
 # =========================
 
 @st.cache_data(ttl=300)
-def fetch_kpis_data(user_ctx, date_from, date_to, scope_override=None):
-    supabase = get_supabase()
+def fetch_kpis_data(
+    u_ambito, u_vertical, u_rol, u_comuna_id, u_tipo_usuario, u_id,
+    date_from, date_to,
+    scope_override_comuna=None, scope_override_vertical=None,
+):
     """
     Trae los datos necesarios para KPIs respetando el scope, filtrando por usuarios y calculando semáforos.
+
+    Recibe parámetros escalares (no dict) para que @st.cache_data pueda hashearlos correctamente.
+    Los dicts no son hasheables y Streamlit no puede cachear funciones que los reciben directamente.
     """
+    supabase = get_supabase()
+
+    # Reconstruir user_ctx desde escalares
+    user_ctx = {
+        "ambito":       u_ambito,
+        "vertical":     u_vertical,
+        "rol":          u_rol,
+        "comuna_id":    u_comuna_id,
+        "tipo_usuario": u_tipo_usuario,
+        "id":           u_id,
+    }
+
     effective_ctx = user_ctx.copy()
-    if scope_override:
-        if scope_override.get("comuna"):
-            effective_ctx["comuna_id"] = scope_override["comuna"]
-            effective_ctx["ambito"] = "COMUNA"
-            effective_ctx["rol"] = "CABEZA"
-        elif scope_override.get("vertical"):
-            effective_ctx["vertical"] = scope_override["vertical"]
-            effective_ctx["ambito"] = "VERTICAL_PERSONAS"
-            effective_ctx["rol"] = "CABEZA"
+    if scope_override_comuna is not None:
+        effective_ctx["comuna_id"] = scope_override_comuna
+        effective_ctx["ambito"] = "COMUNA"
+        effective_ctx["rol"] = "CABEZA"
+    elif scope_override_vertical is not None:
+        effective_ctx["vertical"] = scope_override_vertical
+        effective_ctx["ambito"] = "VERTICAL_PERSONAS"
+        effective_ctx["rol"] = "CABEZA"
 
     is_clubes_kpis = (
         (effective_ctx.get("ambito") or "").strip().upper() == "VERTICAL_ASOCIACIONES"
@@ -87,9 +108,11 @@ def fetch_kpis_data(user_ctx, date_from, date_to, scope_override=None):
         rows = []
         page = 0
         page_size = 1000
+        # ORDER BY id garantiza paginación determinista con offset-based range
+        ordered = query.order("id", desc=False)
         while True:
             # .range() es inclusivo en start y end
-            res = query.range(page * page_size, (page + 1) * page_size - 1).execute()
+            res = ordered.range(page * page_size, (page + 1) * page_size - 1).execute()
             data = res.data or []
             rows.extend(data)
             if len(data) < page_size:
@@ -97,17 +120,22 @@ def fetch_kpis_data(user_ctx, date_from, date_to, scope_override=None):
             page += 1
         return pd.DataFrame(rows)
 
-    # 1. Obtener IDs de usuarios del ámbito para filtrar interacciones (Pedido del usuario)
-    u_query = supabase.table("usuarios").select("id")
-    if effective_ctx.get("ambito") == "COMUNA" and effective_ctx.get("comuna_id"):
-        u_query = u_query.eq("comuna_id", int(effective_ctx["comuna_id"]))
-    elif effective_ctx.get("vertical") and "VERTICAL" in effective_ctx.get("ambito", ""):
-        u_query = u_query.eq("vertical", effective_ctx["vertical"])
-    
-    # Usuarios suelen ser pocos, pero por seguridad usamos fetch_all si creciera
-    # Aunque execute() directo suele bastar usuarios < 1000. Dejamos execute() por ahora para usuarios.
-    res_u = u_query.execute()
-    user_ids = [r["id"] for r in (res_u.data or [])]
+    # 1. Obtener IDs de usuarios del ámbito para filtrar interacciones
+    # Solo aplica para COMUNA y VERTICAL — para GLOBAL traemos todas las interacciones
+    # sin filtrar por usuario (evita excluir interacciones con created_by NULL o de
+    # usuarios eliminados, lo que causaba conteos incorrectos).
+    ambito_efectivo = (effective_ctx.get("ambito") or "").strip().upper()
+    es_global = ambito_efectivo == "GLOBAL"
+
+    user_ids = []
+    if not es_global:
+        u_query = supabase.table("usuarios").select("id")
+        if ambito_efectivo == "COMUNA" and effective_ctx.get("comuna_id"):
+            u_query = u_query.eq("comuna_id", int(effective_ctx["comuna_id"]))
+        elif effective_ctx.get("vertical") and "VERTICAL" in ambito_efectivo:
+            u_query = u_query.eq("vertical", effective_ctx["vertical"])
+        res_u = u_query.execute()
+        user_ids = [r["id"] for r in (res_u.data or [])]
 
     # 2. Fetch Personas (Filtrado por visibilidad)
     if is_clubes_kpis:
@@ -139,30 +167,31 @@ def fetch_kpis_data(user_ctx, date_from, date_to, scope_override=None):
     df_a = _fetch_all(a_query)
 
     # 4. Fetch Interacciones (Históricas para semáforos y rango UI para analítico)
-    since_180 = (datetime.date.today() - datetime.timedelta(days=180)).isoformat()
+    since_180 = (datetime.date.today() - datetime.timedelta(days=365)).isoformat()
     
-    def fetch_paged(table, id_col):
+    def fetch_paged(table, id_col, filter_user_ids=None):
         rows = []
         page = 0
         while True:
-            q = supabase.table(table).select(f"{id_col}, fecha, respuesta, created_by")
+            q = supabase.table(table).select(f"id, {id_col}, fecha, respuesta, created_by")
             q = q.gte("fecha", since_180)
+            if filter_user_ids:
+                q = q.in_("created_by", filter_user_ids)
+            # ORDER BY id es obligatorio para que el offset-based pagination sea determinista
+            q = q.order("id", desc=False)
             res = q.range(page*1000, (page+1)*1000 - 1).execute()
             data = res.data or []
             rows.extend(data)
-            if len(data) < 1000: break
+            if len(data) < 1000:
+                break
             page += 1
         return pd.DataFrame(rows)
 
-    df_ip_raw = pd.DataFrame() if is_clubes_kpis else fetch_paged("interacciones_personas", "persona_id")
-    df_ia_raw = fetch_paged("interacciones_asociaciones", "asociacion_id")
-    
-    # Filtrar interacciones por los Usuarios del ámbito (Pedido crítico)
-    if user_ids:
-        if not df_ip_raw.empty:
-            df_ip_raw = df_ip_raw[df_ip_raw["created_by"].isin(user_ids)]
-        if not df_ia_raw.empty:
-            df_ia_raw = df_ia_raw[df_ia_raw["created_by"].isin(user_ids)]
+    # Para el SEMÁFORO traemos TODAS las interacciones sin filtro de usuario:
+    # el semáforo refleja el estado real de cada persona (última interacción de cualquiera).
+    # El filtro por usuario se aplica solo en el análisis de actividad (df_ip_ui / df_ia_ui).
+    df_ip_raw = pd.DataFrame() if is_clubes_kpis else fetch_paged("interacciones_personas", "persona_id", None)
+    df_ia_raw = fetch_paged("interacciones_asociaciones", "asociacion_id", None)
 
     if is_clubes_kpis and not df_ia_raw.empty:
         # CLUBES solo debe contar interacciones de asociaciones visibles con tipo="Clubes".
@@ -189,9 +218,24 @@ def fetch_kpis_data(user_ctx, date_from, date_to, scope_override=None):
         df_a['semaforo_tiempo'] = df_a['dias_contacto'].apply(lambda x: _semaforo_tiempo_label(x, is_asoc=True))
         df_a['semaforo_respuesta'] = df_a['respuesta'].apply(lambda x: _semaforo_respuesta_label(x, is_asoc=True))
 
-    # Filtrar por fecha para el rango de visualización
-    df_ip_ui = df_ip_raw[(pd.to_datetime(df_ip_raw['fecha']).dt.date >= date_from) & (pd.to_datetime(df_ip_raw['fecha']).dt.date <= date_to)] if not df_ip_raw.empty else pd.DataFrame()
-    df_ia_ui = df_ia_raw[(pd.to_datetime(df_ia_raw['fecha']).dt.date >= date_from) & (pd.to_datetime(df_ia_raw['fecha']).dt.date <= date_to)] if not df_ia_raw.empty else pd.DataFrame()
+    # Filtrar por fecha Y por usuarios del ámbito para el análisis de actividad
+    # (muestra solo lo que hizo MI equipo en el período seleccionado)
+    scope_user_filter = user_ids if (not es_global and user_ids) else None
+
+    def _filtrar_ui(df):
+        if df.empty:
+            return pd.DataFrame()
+        mask = (
+            (pd.to_datetime(df['fecha']).dt.date >= date_from) &
+            (pd.to_datetime(df['fecha']).dt.date <= date_to)
+        )
+        out = df[mask]
+        if scope_user_filter:
+            out = out[out['created_by'].isin(scope_user_filter)]
+        return out
+
+    df_ip_ui = _filtrar_ui(df_ip_raw)
+    df_ia_ui = _filtrar_ui(df_ia_raw)
 
     return df_p, df_a, df_ip_ui, df_ia_ui
 
@@ -227,7 +271,18 @@ def render_kpis_tab(user_ctx, supabase):
     # Fetch Data
     with st.spinner("Cargando analíticas..."):
         try:
-            df_p, df_a, df_ip, df_ia = fetch_kpis_data(user_ctx, date_from, date_to, scope_override or None)
+            df_p, df_a, df_ip, df_ia = fetch_kpis_data(
+                user_ctx.get("ambito"),
+                user_ctx.get("vertical"),
+                user_ctx.get("rol"),
+                user_ctx.get("comuna_id"),
+                user_ctx.get("tipo_usuario"),
+                user_ctx.get("id"),
+                date_from,
+                date_to,
+                scope_override.get("comuna") if scope_override else None,
+                scope_override.get("vertical") if scope_override else None,
+            )
         except Exception as e:
             st.error(f"Error al obtener datos: {e}")
             return
@@ -238,8 +293,8 @@ def render_kpis_tab(user_ctx, supabase):
             st.info("No hay datos de personas para este ámbito.")
         else:
             k1, k2, k3 = st.columns(3)
-            # Contactada = respuesta no nula y no contiene "NO CONTACTADO"
-            contactadas = df_p[~df_p["semaforo_respuesta"].fillna("").str.contains("NO CONTACTADO", case=False)]
+            # Contactada = respuesta no nula y no es NO RESPONDIÓ / NO CONTACTADO
+            contactadas = df_p[~df_p["semaforo_respuesta"].fillna("").str.contains("NO CONTACTADO|NO RESPONDIÓ", case=False)]
             k1.metric("Total Base", f"{len(df_p):,}")
             k2.metric("Contactadas", f"{len(contactadas):,}")
             k3.metric("% Penetración", f"{(len(contactadas)/len(df_p)*100):.1f}%" if not df_p.empty else "0%")
@@ -339,8 +394,17 @@ def render_segmentos_kpis(user_ctx, supabase):
             if sel_vertical != "Todos":
                 q_reun = q_reun.eq("scope_tipo", "VERTICAL").eq("scope_valor", sel_vertical)
 
-            res_reun = q_reun.limit(5000).execute()
-            df_reun = pd.DataFrame(res_reun.data or [])
+            # Paginación completa — sin límite fijo
+            _rows_reun, _page_reun = [], 0
+            _q_reun_ord = q_reun.order("id", desc=False)
+            while True:
+                _res = _q_reun_ord.range(_page_reun * 1000, (_page_reun + 1) * 1000 - 1).execute()
+                _data = _res.data or []
+                _rows_reun.extend(_data)
+                if len(_data) < 1000:
+                    break
+                _page_reun += 1
+            df_reun = pd.DataFrame(_rows_reun)
 
             hoy_str = str(datetime.date.today())
             if not df_reun.empty:

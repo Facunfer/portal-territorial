@@ -277,6 +277,8 @@ def semaforo_respuesta_label(status):
         return "🔴 NEGATIVO"
     if s == "NUMERO INEXISTENTE/EQUIVOCADO":
         return "🟠 NÚMERO INEXISTENTE/EQUIVOCADO"
+    if s == "NO RESPONDIÓ":
+        return "⚫ NO RESPONDIÓ"
     return "⚫ NO CONTACTADO"
 
 
@@ -339,19 +341,28 @@ def _get_assigned_persona_ids_via_usuarios_asignaciones(user: dict) -> list[int]
         return []
 
 # =========================
-# Data Personas (respetando scope)
+# Data Personas (respetando scope) — con cache
 # =========================
-def get_personas_for_user(user, force_vertical_filter: bool = True):
-    """
-    Respeta el scope definido en router_personas:
-    - ALL: sin filtro
-    - COMUNA: filtra por comuna_id del user
-    - TAG: filtra por tag exacto (case-insensitive) sobre personas.tags
 
-    Importante:
-    - personas.tags puede ser array (list) o string.
-    - Para TAG, filtramos en Python para evitar depender de operadores de PostgREST
-      y para que funcione igual si tags es array o string.
+@st.cache_data(ttl=120)
+def _fetch_personas_cached(
+    scope_kind: str,
+    scope_value: str,
+    u_id,
+    u_ambito: str,
+    u_vertical: str,
+    u_rol: str,
+    u_comuna_id,
+    u_tipo_usuario: str,
+    assigned_ids_tuple: tuple,   # IDs asignados para EXTRACTO (vacío si no aplica)
+    force_vertical_filter: bool,
+) -> pd.DataFrame:
+    """
+    Capa cacheada de get_personas_for_user.
+    Recibe únicamente tipos escalares + tupla para que @st.cache_data pueda hashear.
+    NO lee session_state — todos los valores se pasan desde la capa exterior.
+
+    TTL de 120s: balance entre frescura y carga en DB.
     """
     supabase = get_supabase()
     cols = (
@@ -359,22 +370,22 @@ def get_personas_for_user(user, force_vertical_filter: bool = True):
         "sexo, edad, fiscalizo, de_donde_salio, creado_en, tags, latitud, longitud"
     )
 
-    kind, scope_value = _get_scope()
+    # Reconstruir user dict desde escalares
+    user = {
+        "id":           u_id,
+        "ambito":       u_ambito,
+        "vertical":     u_vertical,
+        "rol":          u_rol,
+        "comuna_id":    u_comuna_id,
+        "tipo_usuario": u_tipo_usuario,
+    }
 
-    # 0) EXTRACTO: ver SOLO lo asignado (ignora scope general)
-    if _is_extracto(user):
-        ids = _get_assigned_persona_ids_via_usuarios_asignaciones(user)
-        if not ids:
-            return pd.DataFrame([])
-
-        # Traer solo las personas asignadas (en chunks para no romper URL)
+    # 0) EXTRACTO: ver SOLO lo asignado
+    if assigned_ids_tuple:
+        ids = list(assigned_ids_tuple)
         rows = []
-        def _chunk(xs, n=200):
-            xs=list(xs)
-            for i in range(0, len(xs), n):
-                yield xs[i:i+n]
-
-        for ch in _chunk(ids, 200):
+        for i in range(0, len(ids), 200):
+            ch = ids[i:i + 200]
             page, page_size = 0, 1000
             while True:
                 res = (
@@ -393,25 +404,17 @@ def get_personas_for_user(user, force_vertical_filter: bool = True):
         df = pd.DataFrame(rows)
         if df.empty:
             return df
-
-        # normalizar tags a string para filtros y UI
         if "tags" in df.columns:
             df["tags"] = df["tags"].apply(_parse_tags)
-
         if "creado_en" in df.columns:
             df["creado_en"] = df["creado_en"].astype("string").replace("NaT", "").fillna("")
-
         return df
 
-
+    # 1) Fetch paginado con filtros de visibilidad server-side
     q = supabase.table("personas").select(cols)
-
-    # Aplicar reglas de visibilidad SENSIBLES (server-side)
     q = personas_scope_rules.apply_personas_visibility_filter(q, user, force_filter=force_vertical_filter)
 
-    # 2) Traer en páginas
-    rows, page = [], 0
-    page_size = 1000
+    rows, page, page_size = [], 0, 1000
     while True:
         res = q.range(page * page_size, (page + 1) * page_size - 1).execute()
         data = res.data or []
@@ -424,51 +427,75 @@ def get_personas_for_user(user, force_vertical_filter: bool = True):
     if df.empty:
         return df
 
-    # 3) Filtro por TAG (Legacy/Fallback)
-    # Si por alguna razón el scope_rules no atrapó la vertical pero el scope es TAG,
-    # filtramos en Python como fallback de seguridad.
-    kind, scope_value = _get_scope() # Re-check scope
-    if kind == "TAG" and not personas_scope_rules.is_restricted_vertical(user):
+    # 2) Filtro TAG en Python (legacy / fallback de seguridad)
+    if scope_kind == "TAG":
         tag_obj = (scope_value or "").strip().upper()
         if tag_obj:
             allowed_tags = {t.strip() for t in tag_obj.split("|") if t.strip()}
-            def _tiene_tag(tags_str: str):
-                tagset = {t.strip().upper() for t in str(tags_str).split(",") if t.strip()}
-                return any(t in tagset for t in allowed_tags)
-            
-            # Nota: Necesitamos parsear tags antes de aplicar el filtro si vienen como array
+
             def _local_parse(x):
                 if isinstance(x, list): return ",".join([str(i) for i in x])
                 return str(x) if x else ""
 
+            def _tiene_tag_raw(tags_str: str):
+                tagset = {t.strip().upper() for t in str(tags_str).split(",") if t.strip()}
+                return any(t in tagset for t in allowed_tags)
+
             df["_tmp_tags"] = df["tags"].apply(_local_parse)
-            df = df[df["_tmp_tags"].fillna("").astype(str).apply(_tiene_tag)].copy()
+            df = df[df["_tmp_tags"].fillna("").astype(str).apply(_tiene_tag_raw)].copy()
             df.drop(columns=["_tmp_tags"], inplace=True)
         else:
             df = df.iloc[0:0].copy()
 
-    # normalizar tags a string para filtros y UI
+    # 3) Normalizar tags y fechas para UI
     if "tags" in df.columns:
         df["tags"] = df["tags"].apply(_parse_tags)
-
     if "creado_en" in df.columns:
         df["creado_en"] = df["creado_en"].astype("string").replace("NaT", "").fillna("")
 
-    # 3) filtro por TAG (vertical personas)
-    if kind == "TAG":
+    # 4) Segundo filtro TAG post-normalización (vertical personas)
+    if scope_kind == "TAG":
         tag_obj = (scope_value or "").strip().upper()
         if tag_obj:
             allowed_tags = {t.strip() for t in tag_obj.split("|") if t.strip()}
             def _tiene_tag(tags_str: str):
                 tagset = {t.strip().upper() for t in str(tags_str).split(",") if t.strip()}
                 return any(t in tagset for t in allowed_tags)
-
             df = df[df["tags"].fillna("").astype(str).apply(_tiene_tag)].copy()
         else:
-            # scope TAG sin value => nada
             df = df.iloc[0:0].copy()
 
     return df
+
+
+def get_personas_for_user(user, force_vertical_filter: bool = True) -> pd.DataFrame:
+    """
+    Wrapper público — lee session_state y delega a la capa cacheada.
+    Separar la lectura de session_state del fetch en DB permite cachear el trabajo pesado
+    sin perder la frescura del scope (que puede cambiar en la sesión del usuario).
+    """
+    kind, scope_value = _get_scope()   # lee session_state AQUÍ, fuera del cache
+
+    # Para EXTRACTO, los IDs asignados se pasan como tupla (hasheable)
+    assigned_ids: tuple = ()
+    if _is_extracto(user):
+        ids = _get_assigned_persona_ids_via_usuarios_asignaciones(user)
+        if not ids:
+            return pd.DataFrame([])
+        assigned_ids = tuple(sorted(ids))
+
+    return _fetch_personas_cached(
+        scope_kind          = kind,
+        scope_value         = scope_value or "",
+        u_id                = user.get("id"),
+        u_ambito            = user.get("ambito") or "",
+        u_vertical          = user.get("vertical") or "",
+        u_rol               = user.get("rol") or "",
+        u_comuna_id         = user.get("comuna_id"),
+        u_tipo_usuario      = user.get("tipo_usuario") or "",
+        assigned_ids_tuple  = assigned_ids,
+        force_vertical_filter = force_vertical_filter,
+    )
 
 
 # =========================
@@ -483,61 +510,62 @@ def _chunk_list(xs, size: int):
 @st.cache_data(ttl=120)
 def get_interacciones_resumen(persona_ids_tuple: tuple, chunk_size: int = 250):
     """
-    Devuelve dict:
-      persona_id -> (fecha_dt, status_norm, created_by_id)
-    Recibe una tupla para que sea hasheable por st.cache_data.
+    Devuelve dict: persona_id -> (fecha_dt, status_norm, created_by_id)
+    Usa RPC con DISTINCT ON para obtener la última interacción por persona
+    en una sola query en lugar de N chunks.
     """
     if not persona_ids_tuple:
         return {}
 
     supabase = get_supabase()
-    rows = []
+    ids = [int(x) for x in persona_ids_tuple]
 
-    for chunk in _chunk_list([int(x) for x in persona_ids_tuple], chunk_size):
-        page, page_size = 0, 1000
-        while True:
-            res = (
-                supabase.table("interacciones_personas")
-                .select("persona_id, fecha, respuesta, created_by")
-                .in_("persona_id", chunk)
-                .order("fecha", desc=True)
-                .range(page * page_size, (page + 1) * page_size - 1)
-                .execute()
-            )
-            data = res.data or []
-            rows.extend(data)
-            if len(data) < page_size:
-                break
-            page += 1
+    _ALLOWED = {"POSITIVO", "NEUTRO", "NEGATIVO", "NO RESPONDIÓ", "NO CONTACTADO", "NUMERO INEXISTENTE/EQUIVOCADO"}
 
     def norm_status(s):
         if s is None:
             return "NO CONTACTADO"
         up = str(s).strip().upper()
-        allowed = ["POSITIVO", "NEUTRO", "NEGATIVO", "NO CONTACTADO", "NUMERO INEXISTENTE/EQUIVOCADO"]
-        return up if up in allowed else "NO CONTACTADO"
+        return up if up in _ALLOWED else "NO CONTACTADO"
+
+    # RPC en chunks de 1000 — PostgREST limita a 1000 filas por request.
+    # DISTINCT ON devuelve 1 fila por persona → chunk de 1000 IDs = máx 1000 filas,
+    # dentro del límite. Cubrimos todos los IDs con múltiples llamadas.
+    rows = []
+    rpc_ok = True
+    for chunk in _chunk_list(ids, 1000):
+        try:
+            res = supabase.rpc("get_ultima_interaccion_personas", {"ids": chunk}).execute()
+            rows.extend(res.data or [])
+        except Exception:
+            rpc_ok = False
+            break
+
+    if not rpc_ok:
+        # Fallback chunked sin límite si el RPC no existe
+        rows = []
+        for chunk in _chunk_list(ids, chunk_size):
+            res = (
+                supabase.table("interacciones_personas")
+                .select("persona_id, fecha, respuesta, created_by")
+                .in_("persona_id", chunk)
+                .order("fecha", desc=True)
+                .order("id", desc=True)
+                .execute()
+            )
+            rows.extend(res.data or [])
 
     resumen = {}
-    def _parse_fecha(x):
-        try:
-            return pd.to_datetime(x)
-        except Exception:
-            return pd.NaT
-
-    rows_sorted = sorted(rows, key=lambda r: _parse_fecha(r.get("fecha")), reverse=True)
-
-    for r in rows_sorted:
+    for r in rows:
         pid = r.get("persona_id")
         if pid is None or pid in resumen:
             continue
         fecha_raw = r.get("fecha")
         try:
-            fecha_dt = pd.to_datetime(fecha_raw).date() if str(fecha_raw).strip() else None
+            fecha_dt = pd.to_datetime(fecha_raw).date() if fecha_raw and str(fecha_raw).strip() else None
         except Exception:
             fecha_dt = None
         resumen[int(pid)] = (fecha_dt, norm_status(r.get("respuesta")), r.get("created_by"))
-    return resumen
-
 
     return resumen
 
@@ -1292,7 +1320,7 @@ def personas_screen():
                     try:
                         personas_edicion.insert_interacciones_bulk(_payloads)
                         st.success(f"Finalizado. ✅ {len(_payloads)} interacciones guardadas.")
-                        get_interacciones_resumen.clear()
+                        personas_edicion._clear_interacciones_cache()
                     except Exception as _e:
                         st.error(f"Error al guardar interacciones: {_e}")
                     st.session_state["show_mass_interaction"] = False

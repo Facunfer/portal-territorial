@@ -7,8 +7,10 @@ import streamlit as st
 
 AGENDA_REUNIONES_COLUMNS = [
     "fecha",
-    "titulo",
+    "hora",
     "tipo",
+    "subtipo_reunion",
+    "titulo",
     "lugar",
     "scope_tipo",
     "scope_valor",
@@ -182,5 +184,20 @@ def render(user: dict, supabase):
     )
     df_filtrado = apply_reuniones_filters(df, fecha_desde, fecha_hasta, verticales, comunas)
     df_show = prepare_reuniones_table(df_filtrado)
+
+    # Renombrar columnas para visualización
+    cols_rename = {
+        "fecha": "Fecha",
+        "hora": "Hora",
+        "tipo": "Tipo",
+        "subtipo_reunion": "Subtipo",
+        "titulo": "Título",
+        "lugar": "Lugar",
+        "scope_tipo": "Ámbito",
+        "scope_valor": "Valor Ámbito",
+        "participantes_estimados": "Participantes",
+        "realizada": "Realizada",
+    }
+    df_show = df_show.rename(columns={k: v for k, v in cols_rename.items() if k in df_show.columns})
 
     st.dataframe(df_show, use_container_width=True, hide_index=True)

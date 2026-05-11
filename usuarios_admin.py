@@ -2,12 +2,18 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import bcrypt
 
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 from db import get_supabase
 import permisos
 import personas_scope_rules
+
+
+def _hash_password(plain: str) -> str:
+    """Genera un hash bcrypt para una contraseña en texto plano."""
+    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 LOCALE_ES = {
@@ -379,18 +385,29 @@ def _fetch_interacciones_asoc_resumen(a_ids: list[int]):
     if not a_ids:
         return {}
     supabase = get_supabase()
-    # Solo necesitamos la última con Feedback útil? O la última absoluta?
-    # La app de asociaciones toma la última con respuesta != "" 
-    # (excepto si es seguimiento asigando vacio). Mismo criterio.
-    
-    res = (
-        supabase.table("interacciones_asociaciones")
-        .select("asociacion_id, fecha, respuesta, tipo")
-        .in_("asociacion_id", a_ids)
-        .order("fecha", desc=True)
-        .execute()
-    )
-    rows = res.data or []
+
+    # Chunking: .in_() con listas largas genera URLs > 2KB que PostgREST rechaza.
+    # Paginación: garantiza traer todas las filas aunque superen el límite por defecto.
+    chunk_size = 200
+    rows = []
+    for i in range(0, len(a_ids), chunk_size):
+        chunk = a_ids[i:i + chunk_size]
+        page = 0
+        while True:
+            res = (
+                supabase.table("interacciones_asociaciones")
+                .select("asociacion_id, fecha, respuesta, tipo")
+                .in_("asociacion_id", chunk)
+                .order("fecha", desc=True)
+                .order("id", desc=True)
+                .range(page * 1000, (page + 1) * 1000 - 1)
+                .execute()
+            )
+            data = res.data or []
+            rows.extend(data)
+            if len(data) < 1000:
+                break
+            page += 1
     
     resumen = {}
     for r in rows:
@@ -1093,7 +1110,7 @@ def render(user: dict):
 
         with c1:
             username = st.text_input("Username *", value="", key="u_new_username")
-            password = st.text_input("Password * (por ahora plano)", value="", type="password", key="u_new_password")
+            password = st.text_input("Password *", value="", type="password", key="u_new_password")
             # activo = st.checkbox("Activo", value=True, key="u_new_activo")
             activo = True
 
@@ -1161,16 +1178,18 @@ def render(user: dict):
             personas_ids, asociaciones_ids = _render_assignment_selector(user, target_conf_new, key_prefix="u_new_create")
 
 
-        st.caption("Nota: por ahora guardamos el password como `password_hash` plano (como lo tenés hoy).")
-
         if st.button("✅ Crear usuario", key="u_new_create_btn"):
             if not username.strip() or not password.strip():
                 st.error("Completá username y password.")
                 return
 
+            if len(password.strip()) < 6:
+                st.error("La contraseña debe tener al menos 6 caracteres.")
+                return
+
             payload = {
                 "username": username.strip(),
-                "password_hash": password.strip(),
+                "password_hash": _hash_password(password.strip()),
                 "activo": bool(activo),
                 "ambito": (ambito or "").strip().upper() if ambito else None,
                 "vertical": (vertical or "").strip().upper() if vertical else None,
@@ -1251,3 +1270,47 @@ def render(user: dict):
 
             except Exception as e:
                 st.error(f"Error creando usuario: {e}")
+
+    # =========================
+    # Cambiar contraseña de un usuario existente
+    # =========================
+    st.markdown("---")
+    with st.expander("🔑 Cambiar contraseña de usuario existente"):
+        st.caption("Usá esto para resetear la contraseña de cualquier usuario de tu ámbito.")
+
+        # Obtener lista de usuarios visibles
+        try:
+            supabase = get_supabase()
+            u_list_res = supabase.table("usuarios").select("id, username, activo").order("username").execute()
+            u_list = u_list_res.data or []
+        except Exception as e:
+            st.error(f"No se pudo cargar la lista de usuarios: {e}")
+            u_list = []
+
+        if u_list:
+            opciones_u = {f"{u['username']} (id={u['id']}){'  🔴' if not u.get('activo') else ''}": u["id"] for u in u_list}
+            u_selected_label = st.selectbox("Usuario", list(opciones_u.keys()), key="pw_change_user")
+            u_selected_id = opciones_u[u_selected_label]
+
+            col_pw1, col_pw2 = st.columns(2)
+            with col_pw1:
+                new_pw = st.text_input("Nueva contraseña", type="password", key="pw_change_new")
+            with col_pw2:
+                new_pw_confirm = st.text_input("Confirmar contraseña", type="password", key="pw_change_confirm")
+
+            if st.button("💾 Guardar nueva contraseña", key="pw_change_btn"):
+                if not new_pw.strip():
+                    st.error("Ingresá la nueva contraseña.")
+                elif len(new_pw.strip()) < 6:
+                    st.error("La contraseña debe tener al menos 6 caracteres.")
+                elif new_pw != new_pw_confirm:
+                    st.error("Las contraseñas no coinciden.")
+                else:
+                    try:
+                        hashed = _hash_password(new_pw.strip())
+                        supabase.table("usuarios").update(
+                            {"password_hash": hashed}
+                        ).eq("id", u_selected_id).execute()
+                        st.success(f"Contraseña actualizada correctamente para '{u_selected_label.split(' (')[0]}'.")
+                    except Exception as e:
+                        st.error(f"Error al actualizar contraseña: {e}")

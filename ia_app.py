@@ -74,7 +74,7 @@ def _get_scope_asoc():
 def apply_asociaciones_visibility_filter(query, user_ctx: dict):
     scope_kind, scope_value = _get_scope_asoc()
     
-    if user_ctx.get("rol") == "EXTRACTO":
+    if (user_ctx.get("rol") or "").strip().upper() == "EXTRACTO":
         supabase = get_supabase()
         res = supabase.table("usuarios_asignaciones").select("objeto_id").eq("usuario_id", user_ctx["id"]).eq("objeto_tipo", "ASOCIACION").execute()
         assigned_ids = [r["objeto_id"] for r in res.data or []]
@@ -105,6 +105,24 @@ def get_visible_asociaciones_query(user_ctx):
     q = supabase.table("asociaciones").select("id, nombre, direccion, referente_nombre, referente_telefono, tipo, comuna_id")
     return apply_asociaciones_visibility_filter(q, user_ctx)
 
+
+# =========================
+# HELPER: paginación genérica
+# =========================
+def _fetch_all_paginated(query, page_size: int = 1000) -> list:
+    """Ejecuta una query paginada y devuelve todos los registros como lista de dicts."""
+    rows, page = [], 0
+    ordered = query.order("id", desc=False)
+    while True:
+        res = ordered.range(page * page_size, (page + 1) * page_size - 1).execute()
+        data = res.data or []
+        rows.extend(data)
+        if len(data) < page_size:
+            break
+        page += 1
+    return rows
+
+
 # =========================
 # LOGIC: DATA FETCHERS
 # =========================
@@ -112,19 +130,30 @@ def fetch_asociaciones_con_respuesta_positiva(user_ctx):
     """Retorna DF de asoc visibles con ultima respuesta positiva."""
     sb = get_supabase()
     q_a = get_visible_asociaciones_query(user_ctx)
-    
-    # FETCH ALL IDS (Pagination loop to avoid limits if needed, but for Asoc usually < 5000 is ok. 
-    # Current limit is default 1000. Let's bump to 5000 safety.)
-    df_a = pd.DataFrame(q_a.limit(5000).execute().data or [])
+
+    # Paginación completa — sin límite fijo
+    df_a = pd.DataFrame(_fetch_all_paginated(q_a))
     if df_a.empty: return pd.DataFrame()
     
     aids = df_a["id"].tolist()
-    
-    # 2. Interacciones
-    res_i = sb.table("interacciones_asociaciones").select("asociacion_id, fecha, respuesta").in_("asociacion_id", aids).order("fecha", desc=True).execute()
-    data_i = res_i.data or []
-    last_int_map = {} 
-    
+    if not aids:
+        return pd.DataFrame()
+
+    # 2. Interacciones — chunked para evitar URLs largas + paginado para no truncar
+    data_i = []
+    chunk_sz = 200
+    for i in range(0, len(aids), chunk_sz):
+        chunk = aids[i:i + chunk_sz]
+        rows_chunk = _fetch_all_paginated(
+            sb.table("interacciones_asociaciones")
+              .select("asociacion_id, fecha, respuesta")
+              .in_("asociacion_id", chunk)
+              .order("fecha", desc=True)
+        )
+        data_i.extend(rows_chunk)
+
+    last_int_map = {}
+
     for row in data_i:
         aid = row["asociacion_id"]
         if aid not in last_int_map:
@@ -251,25 +280,22 @@ def execute_tool(user_ctx, tool_id, params):
         return pd.DataFrame(all_rows), f"Personas contactadas en últimos {days} días."
 
     elif tool_id == "LIST_PERSONAS_SIN_CONTACTO":
-        # Fetch Visible Personas Basic
-        # Warning: If user has 50k visible personas, this is slow.
-        # MVP: Increase safety limit to 10k or improve logic.
-        q_p = get_visible_personas_query(user_ctx).limit(5000) 
-        df_p = pd.DataFrame(q_p.execute().data or [])
+        # Paginación completa — sin límite fijo
+        df_p = pd.DataFrame(_fetch_all_paginated(get_visible_personas_query(user_ctx)))
         if df_p.empty: return pd.DataFrame(), "No hay personas visibles."
-        
-        res_i = sb.table("interacciones_personas").select("persona_id").gte("fecha", str(limit_date)).in_("persona_id", df_p["id"].tolist()).execute()
-        contactados = set([r["persona_id"] for r in res_i.data or []])
+
+        # Buscar quiénes tuvieron contacto reciente (chunked por si hay muchos IDs)
+        contactados = set()
+        pids_all = df_p["id"].tolist()
+        for i in range(0, len(pids_all), 200):
+            chunk = pids_all[i:i + 200]
+            res_i = sb.table("interacciones_personas").select("persona_id").gte("fecha", str(limit_date)).in_("persona_id", chunk).execute()
+            contactados.update(r["persona_id"] for r in res_i.data or [])
         return df_p[~df_p["id"].isin(contactados)], f"Personas sin contacto en últimos {days} días."
 
-
     elif tool_id == "LIST_PERSONAS_POS_SIN_CONTACTO":
-        # 1. Fetch visibles
-        # Use pagination loop to get ALL IDs if needed, but for MVP keep LIMIT safe or bump it.
-        # Ideally we want ALL positive people.
-        q_p = get_visible_personas_query(user_ctx)
-        # Limit 5000 is safe for now.
-        df_p = pd.DataFrame(q_p.limit(5000).execute().data or [])
+        # Paginación completa — sin límite fijo
+        df_p = pd.DataFrame(_fetch_all_paginated(get_visible_personas_query(user_ctx)))
         if df_p.empty: return pd.DataFrame(), "No hay personas visibles."
         
         pids = df_p["id"].tolist()
@@ -352,10 +378,16 @@ def execute_tool(user_ctx, tool_id, params):
         return df, "Asociaciones sin asignar."
 
     elif tool_id == "LIST_ASOC_SIN_VISITA":
-        q_a = get_visible_asociaciones_query(user_ctx).limit(2000)
-        df_a = pd.DataFrame(q_a.execute().data or [])
-        res_i = sb.table("interacciones_asociaciones").select("asociacion_id").in_("asociacion_id", df_a["id"].tolist()).gte("fecha", str(limit_date)).execute()
-        visitadas = set([r["asociacion_id"] for r in res_i.data or []])
+        # Paginación completa — sin límite fijo
+        df_a = pd.DataFrame(_fetch_all_paginated(get_visible_asociaciones_query(user_ctx)))
+        if df_a.empty: return pd.DataFrame(), "No hay asociaciones visibles."
+        # Chunked para no generar URLs largas
+        visitadas = set()
+        aids_all = df_a["id"].tolist()
+        for i in range(0, len(aids_all), 200):
+            chunk = aids_all[i:i + 200]
+            res_i = sb.table("interacciones_asociaciones").select("asociacion_id").in_("asociacion_id", chunk).gte("fecha", str(limit_date)).execute()
+            visitadas.update(r["asociacion_id"] for r in res_i.data or [])
         return df_a[~df_a["id"].isin(visitadas)], f"Asoc sin visita ({days}d)."
 
     return pd.DataFrame(), "N/A"
@@ -368,7 +400,8 @@ def render_paginated_table(df: pd.DataFrame, key_prefix="ia"):
         st.info("No hay resultados para mostrar.")
         return
 
-    col_exp, col_count, col_page = st.columns([1, 1, 2])
+    # Fila 1: export + contador
+    col_exp, col_count = st.columns([1, 1])
     with col_exp:
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
@@ -381,24 +414,27 @@ def render_paginated_table(df: pd.DataFrame, key_prefix="ia"):
     with col_count:
         st.metric("Total", len(df))
 
+    # Fila 2: selector de página (sin anidar columnas dentro de columnas)
     page_size_opts = [50, 100, 200, 500]
     page_size = st.selectbox("Filas/pág", page_size_opts, index=1, key=f"ps_{key_prefix}")
-    
+
     total_pages = (len(df) // page_size) + (1 if len(df) % page_size > 0 else 0)
-    
-    if f"page_{key_prefix}" not in st.session_state: st.session_state[f"page_{key_prefix}"] = 1
-    if st.session_state[f"page_{key_prefix}"] > total_pages: st.session_state[f"page_{key_prefix}"] = 1
+
+    if f"page_{key_prefix}" not in st.session_state:
+        st.session_state[f"page_{key_prefix}"] = 1
+    if st.session_state[f"page_{key_prefix}"] > total_pages:
+        st.session_state[f"page_{key_prefix}"] = 1
     current_page = st.session_state[f"page_{key_prefix}"]
-    
-    with col_page:
-        prev, curr, next_b = st.columns([1, 2, 1])
-        if prev.button("◀", key=f"p_{key_prefix}") and current_page > 1:
-            st.session_state[f"page_{key_prefix}"] -= 1
-            st.rerun()
-        curr.write(f"Pág {current_page}/{total_pages}")
-        if next_b.button("▶", key=f"n_{key_prefix}") and current_page < total_pages:
-            st.session_state[f"page_{key_prefix}"] += 1
-            st.rerun()
+
+    # Navegación en fila plana (sin anidar dentro de otra columna)
+    prev_col, curr_col, next_col = st.columns([1, 2, 1])
+    if prev_col.button("◀", key=f"p_{key_prefix}") and current_page > 1:
+        st.session_state[f"page_{key_prefix}"] -= 1
+        st.rerun()
+    curr_col.write(f"Pág {current_page}/{total_pages}")
+    if next_col.button("▶", key=f"n_{key_prefix}") and current_page < total_pages:
+        st.session_state[f"page_{key_prefix}"] += 1
+        st.rerun()
 
     start_idx = (current_page - 1) * page_size
     st.dataframe(df.iloc[start_idx:start_idx + page_size], use_container_width=True)
@@ -468,30 +504,42 @@ def render(user):
     # --- TAB 2: INTELIGENCIA ---
     with tab_intel:
         st.subheader("⚠️ Alertas de Gestión")
-        
-        if st.button("🔄 Actualizar Alertas"):
-            st.rerun()
-            
-        c1, c2 = st.columns(2)
-        
-        # KPI 1: Personas Positivas Sin Contacto
-        with c1.container(border=True):
-            st.subheader("👥 Personas Positivas Olvidadas")
-            st.caption("Semáforo Verde/Positivo SIN contacto en 30 días.")
-            with st.spinner("Analizando..."):
-                df_pp, _ = execute_tool(user, "LIST_PERSONAS_POS_SIN_CONTACTO", {"days": 30})
-            st.metric("Casos", len(df_pp))
-            if not df_pp.empty:
-                with st.expander("Ver lista"):
-                    render_paginated_table(df_pp, key_prefix="kpi_p_pos")
+        st.caption("Las alertas se calculan al hacer clic en 'Actualizar'. No se recalculan automáticamente en cada render.")
 
-        # KPI 2: Asoc Positiva Sin Contacto
-        with c2.container(border=True):
-             st.subheader("🏢 Asociaciones Positivas Olvidadas")
-             st.caption("Respuesta Positiva SIN visita en 30 días.")
-             with st.spinner("Analizando..."):
+        # Las alertas se guardan en session_state para no re-ejecutar queries
+        # costosas en cada render de Streamlit (scroll, cambio de tab, etc.)
+        if st.button("🔄 Actualizar Alertas", key="btn_actualizar_alertas"):
+            with st.spinner("Calculando alertas..."):
+                df_pp, _ = execute_tool(user, "LIST_PERSONAS_POS_SIN_CONTACTO", {"days": 30})
                 df_ap, _ = execute_tool(user, "LIST_ASOC_POS_SIN_CONTACTO", {"days": 30})
-             st.metric("Casos", len(df_ap))
-             if not df_ap.empty:
-                 with st.expander("Ver lista"):
-                     render_paginated_table(df_ap, key_prefix="kpi_a_pos")
+            st.session_state["ia_intel_df_pp"] = df_pp
+            st.session_state["ia_intel_df_ap"] = df_ap
+            st.session_state["ia_intel_calculado"] = datetime.datetime.now()
+
+        # Mostrar resultados cacheados en session_state
+        if "ia_intel_calculado" in st.session_state:
+            ts = st.session_state["ia_intel_calculado"].strftime("%H:%M:%S")
+            st.caption(f"Último cálculo: {ts}")
+
+            df_pp = st.session_state.get("ia_intel_df_pp", pd.DataFrame())
+            df_ap = st.session_state.get("ia_intel_df_ap", pd.DataFrame())
+
+            c1, c2 = st.columns(2)
+
+            with c1.container(border=True):
+                st.subheader("👥 Personas Positivas Olvidadas")
+                st.caption("Semáforo Verde/Positivo SIN contacto en 30 días.")
+                st.metric("Casos", len(df_pp))
+                if not df_pp.empty:
+                    with st.expander("Ver lista"):
+                        render_paginated_table(df_pp, key_prefix="kpi_p_pos")
+
+            with c2.container(border=True):
+                st.subheader("🏢 Asociaciones Positivas Olvidadas")
+                st.caption("Respuesta Positiva SIN visita en 30 días.")
+                st.metric("Casos", len(df_ap))
+                if not df_ap.empty:
+                    with st.expander("Ver lista"):
+                        render_paginated_table(df_ap, key_prefix="kpi_a_pos")
+        else:
+            st.info("Hacé clic en '🔄 Actualizar Alertas' para calcular las alertas.")
