@@ -200,7 +200,7 @@ def _aggrid_multiselect(df: pd.DataFrame, key: str, height: int = 320):
         df,
         gridOptions=grid_options,
         update_mode=GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.MODEL_CHANGED,
-        theme="streamlit",
+        theme="alpine",
         enable_enterprise_modules=False,
         height=height,
         fit_columns_on_grid_load=True,
@@ -753,7 +753,7 @@ def _render_assignment_selector(viewer_user: dict, target_conf: dict, key_prefix
                      # visual only
                      gb = GridOptionsBuilder.from_dataframe(df_show_view)
                      gb.configure_default_column(sortable=True, filter=True, resizable=True)
-                     AgGrid(df_show_view, gridOptions=gb.build(), theme="streamlit", height=250)
+                     AgGrid(df_show_view, gridOptions=gb.build(), theme="alpine", height=250)
                 else:
                      selected = _aggrid_multiselect(df_show_view, key=f"{key_prefix}_sel_p", height=250)
                      p_ids_res = [int(r.get("id")) for r in selected if r.get("id")]
@@ -811,7 +811,7 @@ def _render_assignment_selector(viewer_user: dict, target_conf: dict, key_prefix
                     st.write(f"**{len(a_ids_res)} lugares seleccionados automáticamente.**")
                     gb = GridOptionsBuilder.from_dataframe(df_show_view_a)
                     gb.configure_default_column(sortable=True, filter=True, resizable=True)
-                    AgGrid(df_show_view_a, gridOptions=gb.build(), theme="streamlit", height=250)
+                    AgGrid(df_show_view_a, gridOptions=gb.build(), theme="alpine", height=250)
                 else:
                     selected = _aggrid_multiselect(df_show_view_a, key=f"{key_prefix}_sel_asoc", height=250)
                     a_ids_res = [int(r.get("id")) for r in selected if r.get("id")]
@@ -897,7 +897,7 @@ def _render_assignment_selector(viewer_user: dict, target_conf: dict, key_prefix
                     st.write(f"**{len(p_ids_res)} personas seleccionadas**")
                     gb = GridOptionsBuilder.from_dataframe(df_show_view)
                     gb.configure_default_column(sortable=True, filter=True, resizable=True)
-                    AgGrid(df_show_view, gridOptions=gb.build(), theme="streamlit", height=250)
+                    AgGrid(df_show_view, gridOptions=gb.build(), theme="alpine", height=250)
             else:
                     selected = _aggrid_multiselect(df_show_view, key=f"{key_prefix}_sel_vp", height=340)
                     p_ids_res = [int(r.get("id")) for r in selected if r.get("id")]
@@ -956,7 +956,7 @@ def _render_assignment_selector(viewer_user: dict, target_conf: dict, key_prefix
                 st.write(f"**{len(a_ids_res)} asociaciones seleccionadas**")
                 gb = GridOptionsBuilder.from_dataframe(df_show_view_a)
                 gb.configure_default_column(sortable=True, filter=True, resizable=True)
-                AgGrid(df_show_view_a, gridOptions=gb.build(), theme="streamlit", height=250)
+                AgGrid(df_show_view_a, gridOptions=gb.build(), theme="alpine", height=250)
             else:
                 selected = _aggrid_multiselect(df_show_view_a, key=f"{key_prefix}_sel_va", height=250)
                 a_ids_res = [int(r.get("id")) for r in selected if r.get("id")]
@@ -995,7 +995,7 @@ def render(user: dict):
                 df,
                 gridOptions=grid_options,
                 update_mode=GridUpdateMode.SELECTION_CHANGED,
-                theme="streamlit",
+                theme="alpine",
                 enable_enterprise_modules=False,
                 height=380,
                 fit_columns_on_grid_load=True,

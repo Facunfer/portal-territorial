@@ -1241,7 +1241,7 @@ def personas_screen():
         dff_show,
         gridOptions=grid_options,
         update_mode=GridUpdateMode.SELECTION_CHANGED,
-        theme="streamlit",
+        theme="alpine",
         enable_enterprise_modules=False,
         height=520,
         fit_columns_on_grid_load=False,

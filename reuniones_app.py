@@ -286,7 +286,7 @@ def render_reuniones_screen(user: dict, supabase):
                     df_personas_visible,
                     gridOptions=grid_options,
                     update_mode=GridUpdateMode.SELECTION_CHANGED,
-                    theme="streamlit",
+                    theme="alpine",
                     height=350,
                     fit_columns_on_grid_load=True,
                     key=f"grid_reunion_asist_{fkey}"

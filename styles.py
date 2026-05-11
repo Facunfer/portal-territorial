@@ -136,11 +136,28 @@ def load_css():
         }
 
         /* =========================================
-           FORZAR MODO CLARO — evita que Chrome dark
-           mode rompa los colores de inputs y texto
+           FORZAR MODO CLARO — bloquea Chrome dark mode
+           "light only" impide que el browser aplique
+           cualquier override de dark mode en toda la página
            ========================================= */
         :root {
-            color-scheme: light !important;
+            color-scheme: light only !important;
+        }
+        html, body {
+            color-scheme: light only !important;
+            background-color: #FFFFFF !important;
+            color: #333333 !important;
+        }
+
+        /* Forzar fondo blanco en todos los contenedores principales */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewBlock"],
+        [data-testid="block-container"],
+        [data-testid="stVerticalBlock"],
+        [data-testid="stHorizontalBlock"],
+        .main, .block-container {
+            background-color: #FFFFFF !important;
+            color: #333333 !important;
         }
 
         /* Texto general del área principal siempre oscuro */
