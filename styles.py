@@ -128,12 +128,20 @@ def load_css():
 
         /* Texto general del área principal siempre oscuro */
         [data-testid="stAppViewContainer"] p,
-        [data-testid="stAppViewContainer"] span,
         [data-testid="stAppViewContainer"] label,
-        [data-testid="stAppViewContainer"] div,
         [data-testid="stAppViewContainer"] [data-testid="stWidgetLabel"],
         [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] {
             color: #333333 !important;
+        }
+
+        /* Botones: texto blanco siempre (anula el override anterior) */
+        .stButton > button,
+        .stButton > button span,
+        .stButton > button p,
+        [data-testid="stAppViewContainer"] .stButton > button,
+        [data-testid="stAppViewContainer"] .stButton > button * {
+            color: #FFFFFF !important;
+            -webkit-text-fill-color: #FFFFFF !important;
         }
 
         /* Inputs: texto escrito por el usuario */
