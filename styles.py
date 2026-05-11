@@ -112,10 +112,27 @@ def load_css():
         }
 
         /* =========================================
+           HEADER DE STREAMLIT — ocultar barra negra
+           ========================================= */
+        header[data-testid="stHeader"] {
+            background-color: transparent !important;
+            height: 0 !important;
+            min-height: 0 !important;
+            visibility: hidden !important;
+        }
+
+        /* Toolbar flotante (los 3 puntos esquina superior derecha) */
+        [data-testid="stToolbar"],
+        #MainMenu {
+            visibility: hidden !important;
+            display: none !important;
+        }
+
+        /* =========================================
            MAIN AREA
            ========================================= */
         [data-testid="stAppViewContainer"] {
-            background-color: #FFFFFF;
+            background-color: #FFFFFF !important;
         }
 
         /* =========================================
@@ -138,10 +155,20 @@ def load_css():
         .stButton > button,
         .stButton > button span,
         .stButton > button p,
+        .stButton > button div,
         [data-testid="stAppViewContainer"] .stButton > button,
         [data-testid="stAppViewContainer"] .stButton > button * {
             color: #FFFFFF !important;
             -webkit-text-fill-color: #FFFFFF !important;
+            background-color: #371959 !important;
+        }
+
+        /* Botones secundarios / descarga (Exportar CSV, etc.) */
+        [data-testid="stDownloadButton"] > button,
+        [data-testid="stDownloadButton"] > button * {
+            color: #FFFFFF !important;
+            -webkit-text-fill-color: #FFFFFF !important;
+            background-color: #371959 !important;
         }
 
         /* Inputs: texto escrito por el usuario */
