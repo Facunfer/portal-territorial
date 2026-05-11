@@ -119,6 +119,50 @@ def load_css():
         }
 
         /* =========================================
+           FORZAR MODO CLARO — evita que Chrome dark
+           mode rompa los colores de inputs y texto
+           ========================================= */
+        :root {
+            color-scheme: light !important;
+        }
+
+        /* Texto general del área principal siempre oscuro */
+        [data-testid="stAppViewContainer"] p,
+        [data-testid="stAppViewContainer"] span,
+        [data-testid="stAppViewContainer"] label,
+        [data-testid="stAppViewContainer"] div,
+        [data-testid="stAppViewContainer"] [data-testid="stWidgetLabel"],
+        [data-testid="stAppViewContainer"] [data-testid="stMarkdownContainer"] {
+            color: #333333 !important;
+        }
+
+        /* Inputs: texto escrito por el usuario */
+        input, textarea,
+        div[data-baseweb="input"] input,
+        div[data-baseweb="base-input"] input,
+        div[data-baseweb="textarea"] textarea {
+            color: #333333 !important;
+            background-color: #FFFFFF !important;
+            -webkit-text-fill-color: #333333 !important;
+        }
+
+        /* Selectbox: texto seleccionado */
+        div[data-baseweb="select"] [data-testid="stSelectbox"],
+        div[data-baseweb="select"] div,
+        div[data-baseweb="select"] span {
+            color: #333333 !important;
+            background-color: #FFFFFF !important;
+        }
+
+        /* Dropdown abierto (lista de opciones) */
+        [data-baseweb="popover"] li,
+        [data-baseweb="menu"] li,
+        [data-baseweb="option"] {
+            color: #333333 !important;
+            background-color: #FFFFFF !important;
+        }
+
+        /* =========================================
            WIDGETS & INPUTS
            ========================================= */
         /* Botones primarios (área principal) */
@@ -140,17 +184,20 @@ def load_css():
         }
 
         /* Inputs de texto y text area */
-        div[data-baseweb="input"] > div, 
+        div[data-baseweb="input"] > div,
         div[data-baseweb="base-input"] {
-            background-color: white !important;
+            background-color: #FFFFFF !important;
             border-color: #371959 !important;
             border-radius: 4px !important;
+            color: #333333 !important;
         }
-        
+
         /* Selectbox / Dropdowns */
         div[data-baseweb="select"] > div {
             border-color: #371959 !important;
             border-radius: 4px !important;
+            background-color: #FFFFFF !important;
+            color: #333333 !important;
         }
         
         /* Checkboxes */
