@@ -342,11 +342,14 @@ def get_ultimo_feedback_real_asoc(asoc_id: int):
 # =========================
 def get_users_same_comuna(user):
     supabase = get_supabase()
+    comuna_id = user.get("comuna_id")
+    if not comuna_id:
+        return []
     res = (
         supabase.table("usuarios")
         .select("id, username, comuna_id, activo")
         .eq("activo", True)
-        .eq("comuna_id", int(user["comuna_id"]))
+        .eq("comuna_id", int(comuna_id))
         .order("username")
         .execute()
     )
