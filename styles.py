@@ -112,26 +112,13 @@ def load_css():
         }
 
         /* =========================================
-           HEADER DE STREAMLIT — fondo blanco, sin negro
+           HEADER DE STREAMLIT — fondo blanco
+           toolbarMode=minimal en config.toml oculta
+           el deploy/share sin tocar el botón de sidebar
            ========================================= */
         header[data-testid="stHeader"] {
             background-color: #FFFFFF !important;
             border-bottom: none !important;
-        }
-
-        /* Ocultar solo el menú hamburguesa y botón deploy,
-           pero NO el botón de colapsar sidebar */
-        [data-testid="stToolbar"],
-        #MainMenu {
-            visibility: hidden !important;
-            display: none !important;
-        }
-
-        /* Botón de colapsar/expandir sidebar — siempre visible */
-        [data-testid="stSidebarCollapsedControl"],
-        [data-testid="collapsedControl"] {
-            visibility: visible !important;
-            display: flex !important;
         }
 
         /* =========================================

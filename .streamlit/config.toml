@@ -14,6 +14,10 @@ maxUploadSize = 10
 # No enviar telemetría a Streamlit
 gatherUsageStats = false
 
+[client]
+# Oculta toolbar (deploy, share, etc.) pero conserva el botón de sidebar
+toolbarMode = "minimal"
+
 [runner]
 # Evita warnings de magic commands en producción
 magicEnabled = false
