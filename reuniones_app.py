@@ -114,19 +114,16 @@ def fetch_reuniones(supabase, user_ctx: dict, filters: dict = None):
 
     return df
 
-def fetch_personas_para_reunion(supabase, user):
+def fetch_personas_para_reunion(supabase, user, search: str = ""):
+    """Carga personas filtrando por búsqueda en el servidor para no traer los 31k registros."""
     q = supabase.table("personas").select("id, nombre_apellido, dni, telefono, comuna_id, tags")
     q = personas_scope_rules.apply_personas_visibility_filter(q, user)
-    # Paginar
-    rows, page, page_size = [], 0, 1000
-    while True:
-        res = q.range(page * page_size, (page + 1) * page_size - 1).execute()
-        data = res.data or []
-        rows.extend(data)
-        if len(data) < page_size:
-            break
-        page += 1
-    return pd.DataFrame(rows)
+    if search:
+        search_safe = search.replace("\\", "").replace("%", r"\%").replace(",", "")
+        q = q.or_(f"nombre_apellido.ilike.%{search_safe}%,dni.ilike.%{search_safe}%,telefono.ilike.%{search_safe}%")
+    q = q.limit(200)
+    res = q.execute()
+    return pd.DataFrame(res.data or [])
 
 
 def insert_reunion(supabase, user: dict, data: dict, asistentes_ids: list = None):
@@ -261,17 +258,15 @@ def render_reuniones_screen(user: dict, supabase):
 
         selected_asistentes_ids = []
         if mostrar_asistentes:
-            df_personas_visible = fetch_personas_para_reunion(supabase, user)
             search_rapido = st.text_input(
-                "Filtrar rápido (Nombre, DNI, Teléfono...)",
+                "🔍 Buscar por Nombre, DNI o Teléfono (mínimo 3 caracteres)",
                 key=f"tbl_search_{fkey}"
             )
-            if search_rapido and not df_personas_visible.empty:
-                df_personas_visible = df_personas_visible[
-                    df_personas_visible["nombre_apellido"].fillna("").str.contains(search_rapido, case=False) |
-                    df_personas_visible["dni"].fillna("").astype(str).str.contains(search_rapido) |
-                    df_personas_visible["telefono"].fillna("").astype(str).str.contains(search_rapido)
-                ]
+            df_personas_visible = pd.DataFrame()
+            if len(search_rapido) >= 3:
+                df_personas_visible = fetch_personas_para_reunion(supabase, user, search=search_rapido)
+            elif search_rapido:
+                st.caption("Escribí al menos 3 caracteres para buscar.")
 
             if not df_personas_visible.empty:
                 gb = GridOptionsBuilder.from_dataframe(df_personas_visible)
