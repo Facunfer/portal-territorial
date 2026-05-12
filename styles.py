@@ -112,20 +112,26 @@ def load_css():
         }
 
         /* =========================================
-           HEADER DE STREAMLIT — ocultar barra negra
+           HEADER DE STREAMLIT — fondo blanco, sin negro
            ========================================= */
         header[data-testid="stHeader"] {
-            background-color: transparent !important;
-            height: 0 !important;
-            min-height: 0 !important;
-            visibility: hidden !important;
+            background-color: #FFFFFF !important;
+            border-bottom: none !important;
         }
 
-        /* Toolbar flotante (los 3 puntos esquina superior derecha) */
+        /* Ocultar solo el menú hamburguesa y botón deploy,
+           pero NO el botón de colapsar sidebar */
         [data-testid="stToolbar"],
         #MainMenu {
             visibility: hidden !important;
             display: none !important;
+        }
+
+        /* Botón de colapsar/expandir sidebar — siempre visible */
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="collapsedControl"] {
+            visibility: visible !important;
+            display: flex !important;
         }
 
         /* =========================================
