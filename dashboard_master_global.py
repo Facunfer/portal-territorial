@@ -384,8 +384,12 @@ def render_dashboard_master_global(user):
     st.markdown("### 📊 Resumen Ejecutivo")
     k1, k2, k3, k4 = st.columns(4)
     total_p, total_a = len(p), len(a)
-    contacted_p = len(ip['persona_id'].unique())
-    contacted_a = len(ia['asociacion_id'].unique())
+    # Usamos df_ip_raw / df_ia_raw (sin filtro de fecha) para que el %
+    # refleje "alguna vez contactado", no solo en el rango seleccionado.
+    p_ids_set = set(p['id'].tolist())
+    a_ids_set = set(a['id'].tolist())
+    contacted_p = len(df_ip_raw[df_ip_raw['persona_id'].isin(p_ids_set)]['persona_id'].unique()) if not df_ip_raw.empty else 0
+    contacted_a = len(df_ia_raw[df_ia_raw['asociacion_id'].isin(a_ids_set)]['asociacion_id'].unique())
     k1.metric("Total Personas", f"{total_p:,}")
     k2.metric("Total Asociaciones", f"{total_a:,}")
     k3.metric("% Personas Contactadas", f"{(contacted_p/total_p*100):.1f}%" if total_p>0 else "0%")
