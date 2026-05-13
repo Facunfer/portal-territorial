@@ -392,8 +392,18 @@ def render_dashboard_master_global(user):
     contacted_a = len(df_ia_raw[df_ia_raw['asociacion_id'].isin(a_ids_set)]['asociacion_id'].unique())
     k1.metric("Total Personas", f"{total_p:,}")
     k2.metric("Total Asociaciones", f"{total_a:,}")
-    k3.metric("% Personas Contactadas", f"{(contacted_p/total_p*100):.1f}%" if total_p>0 else "0%")
-    k4.metric("% Asoc. Visitadas", f"{(contacted_a/total_a*100):.1f}%" if total_a>0 else "0%")
+    k3.metric(
+        "% Personas Contactadas",
+        f"{(contacted_p/total_p*100):.1f}%" if total_p>0 else "0%",
+        delta=f"{contacted_p:,} contactadas",
+        delta_color="off",
+    )
+    k4.metric(
+        "% Asoc. Visitadas",
+        f"{(contacted_a/total_a*100):.1f}%" if total_a>0 else "0%",
+        delta=f"{contacted_a:,} visitadas",
+        delta_color="off",
+    )
 
     tab_territorio, tab_tematico, tab_tendencias, tab_reuniones, tab_calidad = st.tabs([
         "📍 Territorial (Comunas)", "🏷️ Temático (Verticales)", "📈 Tendencias", "🤝 Reuniones", "🔍 Auditoría y Calidad"
