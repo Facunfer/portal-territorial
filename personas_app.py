@@ -1132,7 +1132,11 @@ def personas_screen():
     if filtro_fecha_desde and filtro_fecha_hasta and fechas_validas:
         if not (filtro_fecha_desde == min(fechas_validas) and filtro_fecha_hasta == max(fechas_validas)):
             dff = dff[dff["ultima_fecha_dt"].notna()]
-            dff = dff[(dff["ultima_fecha_dt"] >= filtro_fecha_desde) & (dff["ultima_fecha_dt"] <= filtro_fecha_hasta)]
+            # Normalizar a Timestamp para evitar "Invalid comparison datetime64 vs date"
+            fd = pd.Timestamp(filtro_fecha_desde)
+            fh = pd.Timestamp(filtro_fecha_hasta)
+            col_ts = pd.to_datetime(dff["ultima_fecha_dt"], errors="coerce")
+            dff = dff[(col_ts >= fd) & (col_ts <= fh)]
 
     if filtro_comuna_vertical and filtro_comuna_vertical != "Todas":
         dff = dff[dff["comuna_id"] == int(filtro_comuna_vertical)]
