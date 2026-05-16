@@ -221,6 +221,25 @@ def main():
         modulo = st.radio("Módulo", mods, index=0)
 
         st.markdown("---")
+
+        # Botón mapa — solo para usuarios de ámbito COMUNA
+        if permisos.get_ambito(user) == "COMUNA":
+            st.markdown(
+                """
+                <a href="https://mapa.alianzalalibertadavanzacaba.com/login"
+                   target="_blank"
+                   style="display:block; text-align:center; padding:8px 12px;
+                          background-color:#A6E3FF; color:#371959;
+                          border-radius:4px; font-weight:700;
+                          text-decoration:none; font-size:0.85rem;
+                          text-transform:uppercase; letter-spacing:0.5px;">
+                    🗺️ Ir al Mapa
+                </a>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown("---")
+
         if st.button("CERRAR SESIÓN"):
             st.session_state.pop("user", None)
             st.session_state.pop("selected_persona_id", None)
