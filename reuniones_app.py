@@ -256,7 +256,13 @@ def render_reuniones_screen(user: dict, supabase):
             key=f"toggle_asist_{fkey}"
         )
 
-        selected_asistentes_ids = []
+        # Guardamos selección en session_state para que no se pierda al buscar
+        sel_key = f"asist_ids_{fkey}"
+        if sel_key not in st.session_state:
+            st.session_state[sel_key] = []
+
+        selected_asistentes_ids = st.session_state[sel_key]
+
         if mostrar_asistentes:
             search_rapido = st.text_input(
                 "🔍 Buscar por Nombre, DNI o Teléfono (mínimo 3 caracteres)",
@@ -288,12 +294,22 @@ def render_reuniones_screen(user: dict, supabase):
                 )
 
                 selected_rows = grid_response.get("selected_rows", [])
+                nuevos_ids = []
                 if isinstance(selected_rows, list):
-                    selected_asistentes_ids = [int(r["id"]) for r in selected_rows if r.get("id")]
+                    nuevos_ids = [int(r["id"]) for r in selected_rows if r.get("id")]
                 elif isinstance(selected_rows, pd.DataFrame) and not selected_rows.empty:
-                    selected_asistentes_ids = [int(r["id"]) for _, r in selected_rows.iterrows() if r.get("id") is not None]
+                    nuevos_ids = [int(r["id"]) for _, r in selected_rows.iterrows() if r.get("id") is not None]
 
+                # Acumular: unir IDs previos con los nuevos seleccionados
+                combinados = list(set(st.session_state[sel_key]) | set(nuevos_ids))
+                st.session_state[sel_key] = combinados
+                selected_asistentes_ids = combinados
+
+            # Mostrar los seleccionados acumulados con opción de limpiar
             st.caption(f"Asistentes seleccionados: {len(selected_asistentes_ids)}")
+            if selected_asistentes_ids and st.button("🗑️ Limpiar selección", key=f"btn_clear_asist_{fkey}"):
+                st.session_state[sel_key] = []
+                st.rerun()
             st.markdown("---")
 
         # --- Formulario principal ---

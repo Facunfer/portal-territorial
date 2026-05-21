@@ -229,11 +229,12 @@ def main():
                 <a href="https://mapa.alianzalalibertadavanzacaba.com/login"
                    target="_blank"
                    style="display:block; text-align:center; padding:8px 12px;
-                          background-color:#A6E3FF; color:#371959;
+                          background-color:#371959; color:#FFFFFF;
                           border-radius:4px; font-weight:700;
                           text-decoration:none; font-size:0.85rem;
-                          text-transform:uppercase; letter-spacing:0.5px;">
-                    🗺️ Ir al Mapa
+                          text-transform:uppercase; letter-spacing:0.5px;
+                          border: 1px solid #A6E3FF;">
+                    RECLAMOS/SUGERENCIAS
                 </a>
                 """,
                 unsafe_allow_html=True,
