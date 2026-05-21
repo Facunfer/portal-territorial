@@ -377,19 +377,16 @@ def render_dashboard_master_global(user):
         df_merged['Resultado'] = df_merged['respuesta'].apply(lambda x: _semaforo_respuesta_label(x, is_asoc))
         return df_merged
 
-    p_sem = _calc_sem(p, df_ip_raw, 'persona_id', is_asoc=False)
-    a_sem = _calc_sem(a, df_ia_raw, 'asociacion_id', is_asoc=True)
+    p_sem = _calc_sem(p, ip, 'persona_id', is_asoc=False)
+    a_sem = _calc_sem(a, ia, 'asociacion_id', is_asoc=True)
 
     # --- KPIs ---
     st.markdown("### 📊 Resumen Ejecutivo")
     k1, k2, k3, k4 = st.columns(4)
     total_p, total_a = len(p), len(a)
-    # Usamos df_ip_raw / df_ia_raw (sin filtro de fecha) para que el %
-    # refleje "alguna vez contactado", no solo en el rango seleccionado.
-    p_ids_set = set(p['id'].tolist())
-    a_ids_set = set(a['id'].tolist())
-    contacted_p = len(df_ip_raw[df_ip_raw['persona_id'].isin(p_ids_set)]['persona_id'].unique()) if not df_ip_raw.empty else 0
-    contacted_a = len(df_ia_raw[df_ia_raw['asociacion_id'].isin(a_ids_set)]['asociacion_id'].unique())
+    # Usamos ip / ia (ya filtrados por fecha y demás filtros)
+    contacted_p = ip['persona_id'].nunique() if not ip.empty else 0
+    contacted_a = ia['asociacion_id'].nunique() if not ia.empty else 0
     k1.metric("Total Personas", f"{total_p:,}")
     k2.metric("Total Asociaciones", f"{total_a:,}")
     k3.metric(
