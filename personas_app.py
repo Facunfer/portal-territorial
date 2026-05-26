@@ -344,7 +344,7 @@ def _get_assigned_persona_ids_via_usuarios_asignaciones(user: dict) -> list[int]
 # Data Personas (respetando scope) — con cache
 # =========================
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=30)
 def _fetch_personas_cached(
     scope_kind: str,
     scope_value: str,
@@ -507,7 +507,7 @@ def _chunk_list(xs, size: int):
         yield xs[i:i + size]
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=30)
 def get_interacciones_resumen(persona_ids_tuple: tuple, chunk_size: int = 250):
     """
     Devuelve dict: persona_id -> (fecha_dt, status_norm, created_by_id)
@@ -570,7 +570,7 @@ def get_interacciones_resumen(persona_ids_tuple: tuple, chunk_size: int = 250):
     return resumen
 
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=30)
 def _fetch_all_assigned_users_details(object_type: str, object_ids_tuple: tuple) -> dict:
     """
     Retorna {object_id: [ {username, rol, comuna_id, vertical}, ... ] }

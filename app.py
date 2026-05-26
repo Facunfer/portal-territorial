@@ -2,6 +2,7 @@
 import streamlit as st
 import datetime
 import bcrypt
+import uuid
 
 from db import get_supabase
 import permisos
@@ -101,6 +102,33 @@ def get_user(username: str, password: str):
 
 
 # =========================
+# Sesiones persistentes (sobreviven al refresh del navegador)
+# =========================
+@st.cache_resource
+def _get_session_store() -> dict:
+    """
+    Almacena sesiones activas: { sid (UUID str) → user dict }.
+    Persiste mientras el proceso de Streamlit esté vivo (sobrevive a refreshes).
+    Se pierde solo si el servidor reinicia — en ese caso el usuario debe volver a loguearse.
+    """
+    return {}
+
+
+def _create_session(user: dict) -> str:
+    sid = str(uuid.uuid4())
+    _get_session_store()[sid] = user
+    return sid
+
+
+def _restore_session(sid: str):
+    return _get_session_store().get(sid)
+
+
+def _destroy_session(sid: str) -> None:
+    _get_session_store().pop(sid, None)
+
+
+# =========================
 # Rate limiting (server-side — compartido entre TODAS las sesiones)
 # =========================
 _MAX_INTENTOS = 5
@@ -186,6 +214,8 @@ def show_login():
 
         _rl_clear(username)
         st.session_state["user"] = user
+        sid = _create_session(user)
+        st.query_params["sid"] = sid
         st.rerun()
 
 
@@ -197,6 +227,14 @@ def main():
     
     # Cargar estilos globales (LLA)
     styles.load_css()
+
+    # Restaurar sesión desde URL si el session_state está vacío (ej: refresh de página)
+    if "user" not in st.session_state or not st.session_state["user"]:
+        sid = st.query_params.get("sid", "")
+        if sid:
+            restored = _restore_session(sid)
+            if restored:
+                st.session_state["user"] = restored
 
     # Login
     if "user" not in st.session_state or not st.session_state["user"]:
@@ -242,6 +280,12 @@ def main():
             st.markdown("---")
 
         if st.button("CERRAR SESIÓN"):
+            # Invalidar token de sesión
+            sid = st.query_params.get("sid", "")
+            if sid:
+                _destroy_session(sid)
+            st.query_params.clear()
+
             st.session_state.pop("user", None)
             st.session_state.pop("selected_persona_id", None)
             st.session_state.pop("selected_asoc_id", None)
