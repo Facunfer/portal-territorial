@@ -442,6 +442,15 @@ def _clear_interacciones_cache():
     except Exception as e:
         _log.warning(f"_clear_interacciones_cache: no se pudo limpiar fetch_global_data: {e}")
 
+    # Reset del filtro de fecha: evita que una persona recién contactada quede fuera
+    # del rango del slider (que guarda el max anterior en session_state)
+    try:
+        import streamlit as st
+        if "flt_rango_fecha" in st.session_state:
+            del st.session_state["flt_rango_fecha"]
+    except Exception:
+        pass
+
 
 def insert_interaccion(payload: dict):
     supabase = get_supabase()

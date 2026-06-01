@@ -129,6 +129,67 @@ def _destroy_session(sid: str) -> None:
 
 
 # =========================
+# Sesiones persistentes (sobreviven a F5)
+# =========================
+_SESSION_TTL_HORAS = 12
+
+
+def _create_session(user_data: dict) -> str:
+    """Guarda la sesión en Supabase y devuelve el token UUID."""
+    token = str(uuid.uuid4())
+    expires_at = (
+        datetime.datetime.utcnow() + datetime.timedelta(hours=_SESSION_TTL_HORAS)
+    ).isoformat()
+    try:
+        get_supabase().table("sesiones").insert(
+            {"id": token, "user_data": user_data, "expires_at": expires_at}
+        ).execute()
+    except Exception:
+        pass
+    return token
+
+
+def _restore_session(token: str) -> dict | None:
+    """Intenta restaurar una sesión desde Supabase. Devuelve user_data o None."""
+    if not token:
+        return None
+    try:
+        res = (
+            get_supabase()
+            .table("sesiones")
+            .select("user_data, expires_at")
+            .eq("id", token)
+            .limit(1)
+            .execute()
+        )
+        rows = res.data or []
+        if not rows:
+            return None
+        row = rows[0]
+        expires_at = row.get("expires_at")
+        if expires_at:
+            import pandas as pd
+            exp_dt = pd.to_datetime(expires_at, utc=True)
+            now_dt = pd.Timestamp.utcnow()
+            if now_dt > exp_dt:
+                get_supabase().table("sesiones").delete().eq("id", token).execute()
+                return None
+        return row.get("user_data")
+    except Exception:
+        return None
+
+
+def _delete_session(token: str) -> None:
+    """Elimina la sesión de Supabase al cerrar sesión."""
+    if not token:
+        return
+    try:
+        get_supabase().table("sesiones").delete().eq("id", token).execute()
+    except Exception:
+        pass
+
+
+# =========================
 # Rate limiting (server-side — compartido entre TODAS las sesiones)
 # =========================
 _MAX_INTENTOS = 5
@@ -283,7 +344,7 @@ def main():
             # Invalidar token de sesión
             sid = st.query_params.get("sid", "")
             if sid:
-                _destroy_session(sid)
+                _delete_session(sid)
             st.query_params.clear()
 
             st.session_state.pop("user", None)
