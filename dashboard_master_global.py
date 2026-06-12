@@ -158,15 +158,6 @@ def _norm_comuna(val) -> str:
         return ""
 
 
-def _comuna_sort_key(c):
-    """Clave de orden para comunas: 1→15 numérico, 'Desconocido'/vacío al final."""
-    s = str(c).strip()
-    try:
-        return (0, int(float(s)))
-    except (ValueError, TypeError):
-        return (1, 0)
-
-
 def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
     f_comunas    = filters.get("comunas", [])
     f_barrios    = filters.get("barrios", [])
@@ -466,21 +457,29 @@ def render_dashboard_master_global(user):
     with tab_tendencias:
         st.subheader("📈 Análisis de Actividad (Líneas por Comuna)")
         
-        # 1. Personas Line Chart
+        # 1. Personas: línea por día/comuna + barras totales por comuna (debajo)
         if not ip.empty:
             df_time = ip.copy()
             df_time["fecha_dt"] = pd.to_datetime(df_time["fecha"]).dt.date
             # Agrupar por fecha Y Comuna
             df_counts = df_time.groupby(["fecha_dt", "comuna_id"]).size().reset_index(name="Interacciones")
-            fig_p = px.line(df_counts, x="fecha_dt", y="Interacciones", color="comuna_id", 
+            fig_p = px.line(df_counts, x="fecha_dt", y="Interacciones", color="comuna_id",
                             title="Interacciones Personas por Día y Comuna", markers=True)
             st.plotly_chart(fig_p, use_container_width=True)
+
+            ip_bar = ip.copy()
+            ip_bar["Comuna"] = ip_bar["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
+            bar_p = (ip_bar.groupby("Comuna").size().reset_index(name="Interacciones")
+                     .sort_values("Interacciones", ascending=False))
+            fig_bp = px.bar(bar_p, x="Comuna", y="Interacciones", title="Interacciones de Personas por Comuna",
+                            category_orders={"Comuna": bar_p["Comuna"].tolist()})
+            st.plotly_chart(fig_bp, use_container_width=True)
         else:
             st.info("Sin interacciones con Personas en este rango.")
 
         st.divider()
 
-        # 2. Asociaciones Line Chart
+        # 2. Asociaciones: línea por día/comuna + barras totales por comuna (debajo)
         if not ia.empty:
             df_time_a = ia.copy()
             df_time_a["fecha_dt"] = pd.to_datetime(df_time_a["fecha"]).dt.date
@@ -489,33 +488,16 @@ def render_dashboard_master_global(user):
             fig_a = px.line(df_counts_a, x="fecha_dt", y="Visitas", color="comuna_id",
                             title="Visitas Asociaciones por Día y Comuna", markers=True)
             st.plotly_chart(fig_a, use_container_width=True)
-        else:
-            st.info("Sin visitas a Asociaciones en este rango.")
 
-        st.divider()
-        st.subheader("📊 Totales por Comuna")
-
-        # 3. Interacciones de Personas por Comuna (barras)
-        if not ip.empty:
-            ip_bar = ip.copy()
-            ip_bar["Comuna"] = ip_bar["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
-            bar_p = ip_bar.groupby("Comuna").size().reset_index(name="Interacciones")
-            bar_p = bar_p.sort_values("Comuna", key=lambda s: s.map(_comuna_sort_key))
-            fig_bp = px.bar(bar_p, x="Comuna", y="Interacciones", title="Interacciones de Personas por Comuna")
-            st.plotly_chart(fig_bp, use_container_width=True)
-        else:
-            st.info("Sin interacciones con Personas para mostrar por comuna.")
-
-        # 4. Visitas a Asociaciones por Comuna (barras)
-        if not ia.empty:
             ia_bar = ia.copy()
             ia_bar["Comuna"] = ia_bar["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
-            bar_a = ia_bar.groupby("Comuna").size().reset_index(name="Interacciones")
-            bar_a = bar_a.sort_values("Comuna", key=lambda s: s.map(_comuna_sort_key))
-            fig_ba = px.bar(bar_a, x="Comuna", y="Interacciones", title="Visitas a Asociaciones por Comuna")
+            bar_a = (ia_bar.groupby("Comuna").size().reset_index(name="Interacciones")
+                     .sort_values("Interacciones", ascending=False))
+            fig_ba = px.bar(bar_a, x="Comuna", y="Interacciones", title="Visitas a Asociaciones por Comuna",
+                            category_orders={"Comuna": bar_a["Comuna"].tolist()})
             st.plotly_chart(fig_ba, use_container_width=True)
         else:
-            st.info("Sin visitas a Asociaciones para mostrar por comuna.")
+            st.info("Sin visitas a Asociaciones en este rango.")
 
     with tab_reuniones:
         st.subheader("🤝 Reuniones realizadas")
@@ -543,9 +525,10 @@ def render_dashboard_master_global(user):
                 st.caption("No hay reuniones de ámbito Comuna en este período.")
             else:
                 r_com["Comuna"] = r_com["scope_valor"].apply(lambda v: _norm_comuna(v) or "Desconocido")
-                bar_r = r_com.groupby("Comuna").size().reset_index(name="Reuniones")
-                bar_r = bar_r.sort_values("Comuna", key=lambda s: s.map(_comuna_sort_key))
-                fig_rc = px.bar(bar_r, x="Comuna", y="Reuniones", title="Reuniones por Comuna")
+                bar_r = (r_com.groupby("Comuna").size().reset_index(name="Reuniones")
+                         .sort_values("Reuniones", ascending=False))
+                fig_rc = px.bar(bar_r, x="Comuna", y="Reuniones", title="Reuniones por Comuna",
+                                category_orders={"Comuna": bar_r["Comuna"].tolist()})
                 st.plotly_chart(fig_rc, use_container_width=True)
 
     with tab_calidad:
