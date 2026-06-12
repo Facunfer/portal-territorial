@@ -158,6 +158,15 @@ def _norm_comuna(val) -> str:
         return ""
 
 
+def _comuna_sort_key(c):
+    """Clave de orden para comunas: 1→15 numérico, 'Desconocido'/vacío al final."""
+    s = str(c).strip()
+    try:
+        return (0, int(float(s)))
+    except (ValueError, TypeError):
+        return (1, 0)
+
+
 def filter_data(df_p, df_a, df_ip, df_ia, df_r, filters):
     f_comunas    = filters.get("comunas", [])
     f_barrios    = filters.get("barrios", [])
@@ -483,6 +492,31 @@ def render_dashboard_master_global(user):
         else:
             st.info("Sin visitas a Asociaciones en este rango.")
 
+        st.divider()
+        st.subheader("📊 Totales por Comuna")
+
+        # 3. Interacciones de Personas por Comuna (barras)
+        if not ip.empty:
+            ip_bar = ip.copy()
+            ip_bar["Comuna"] = ip_bar["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
+            bar_p = ip_bar.groupby("Comuna").size().reset_index(name="Interacciones")
+            bar_p = bar_p.sort_values("Comuna", key=lambda s: s.map(_comuna_sort_key))
+            fig_bp = px.bar(bar_p, x="Comuna", y="Interacciones", title="Interacciones de Personas por Comuna")
+            st.plotly_chart(fig_bp, use_container_width=True)
+        else:
+            st.info("Sin interacciones con Personas para mostrar por comuna.")
+
+        # 4. Visitas a Asociaciones por Comuna (barras)
+        if not ia.empty:
+            ia_bar = ia.copy()
+            ia_bar["Comuna"] = ia_bar["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
+            bar_a = ia_bar.groupby("Comuna").size().reset_index(name="Interacciones")
+            bar_a = bar_a.sort_values("Comuna", key=lambda s: s.map(_comuna_sort_key))
+            fig_ba = px.bar(bar_a, x="Comuna", y="Interacciones", title="Visitas a Asociaciones por Comuna")
+            st.plotly_chart(fig_ba, use_container_width=True)
+        else:
+            st.info("Sin visitas a Asociaciones para mostrar por comuna.")
+
     with tab_reuniones:
         st.subheader("🤝 Reuniones realizadas")
         if r.empty:
@@ -501,6 +535,18 @@ def render_dashboard_master_global(user):
             
             with st.expander("Ver detalle de reuniones"):
                 st.dataframe(r[['fecha', 'scope_valor', 'scope_tipo', 'id']], use_container_width=True)
+
+            st.divider()
+            # Reuniones por Comuna (solo scope COMUNA; VERTICAL/GLOBAL no tienen comuna)
+            r_com = r[r["scope_tipo"] == "COMUNA"].copy()
+            if r_com.empty:
+                st.caption("No hay reuniones de ámbito Comuna en este período.")
+            else:
+                r_com["Comuna"] = r_com["scope_valor"].apply(lambda v: _norm_comuna(v) or "Desconocido")
+                bar_r = r_com.groupby("Comuna").size().reset_index(name="Reuniones")
+                bar_r = bar_r.sort_values("Comuna", key=lambda s: s.map(_comuna_sort_key))
+                fig_rc = px.bar(bar_r, x="Comuna", y="Reuniones", title="Reuniones por Comuna")
+                st.plotly_chart(fig_rc, use_container_width=True)
 
     with tab_calidad:
         st.subheader("Auditoría de Datos y Ritmo de Carga")
