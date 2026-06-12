@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 import personas_scope_rules
+import permisos
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from constants import VERTICALES_SEGMENTOS
 
@@ -102,12 +103,10 @@ def fetch_reuniones(supabase, user_ctx: dict, filters: dict = None):
     df = pd.DataFrame(rows)
 
     if filters and filters.get("solo_historial") and not df.empty:
-        hoy_str = str(datetime.date.today())
-        mask = (
-            (df["realizada"] == True) |
-            (df["realizada"].isna() & (df["fecha"] < hoy_str))
-        )
-        df = df[mask]
+        # El Historial depende SOLO de la confirmación explícita ("Se realizó").
+        # Las pendientes vencidas (realizada IS NULL con fecha pasada) NO entran acá:
+        # siguen en Programadas marcadas como vencidas hasta que alguien las resuelva.
+        df = df[df["realizada"] == True]
 
     if filters and filters.get("solo_programadas") and not df.empty:
         df = df[df["realizada"].isna()]
@@ -187,6 +186,64 @@ def insert_reunion(supabase, user: dict, data: dict, asistentes_ids: list = None
             raise RuntimeError(f"Reunión guardada, pero falló el registro de asistentes: {e}") from e
 
     return res
+
+def _can_delete_reunion(row, user: dict) -> bool:
+    """True si el usuario puede eliminar la reunión: Global Master (cualquiera)
+    o el referente que la cargó (created_by_user_id == user.id)."""
+    if permisos.is_global_master(user):
+        return True
+    try:
+        return int(row.get("created_by_user_id")) == int(user.get("id"))
+    except (TypeError, ValueError):
+        return False
+
+
+def delete_reunion(supabase, user: dict, reunion_id: int):
+    """Elimina una reunión propia y sus datos colgados.
+
+    Guard server-side por autoría: primero verificamos quién la cargó y, salvo
+    Global Master, el DELETE final filtra created_by_user_id = user.id. La
+    verificación previa evita borrar los hijos de una reunión ajena si se fuerza
+    la UI.
+
+    Orden de borrado (los hijos ANTES del padre, porque al borrar la reunión
+    interacciones_personas.reunion_id quedaría en NULL y ya no podríamos
+    encontrarlas):
+      1. interacciones_personas con reunion_id = X (las autogeneradas
+         "Participó de reunión"; se borran para no falsear el semáforo de contacto).
+      2. reuniones_asistentes con reunion_id = X.
+      3. reuniones con .eq("id", X) [+ guard de autoría].
+
+    Devuelve (ok: bool, mensaje: str).
+    """
+    rid = int(reunion_id)
+    es_global = permisos.is_global_master(user)
+    try:
+        chk = supabase.table("reuniones").select("id, created_by_user_id").eq("id", rid).limit(1).execute()
+        if not chk.data:
+            return False, "La reunión no existe o ya fue eliminada."
+        owner = chk.data[0].get("created_by_user_id")
+        if not es_global:
+            try:
+                owner_ok = owner is not None and int(owner) == int(user["id"])
+            except (TypeError, ValueError):
+                owner_ok = False
+            if not owner_ok:
+                return False, "No podés eliminar una reunión cargada por otra persona."
+
+        supabase.table("interacciones_personas").delete().eq("reunion_id", rid).execute()
+        supabase.table("reuniones_asistentes").delete().eq("reunion_id", rid).execute()
+
+        q = supabase.table("reuniones").delete().eq("id", rid)
+        if not es_global:
+            q = q.eq("created_by_user_id", int(user["id"]))
+        res = q.execute()
+        if not res.data:
+            return False, "No se eliminó la reunión (no sos quien la cargó o ya no existe)."
+        return True, "Reunión eliminada correctamente."
+    except Exception as exc:
+        return False, f"Error al eliminar la reunión: {exc}"
+
 
 def _scope_label(scope_tipo: str, scope_valor) -> str:
     """Etiqueta legible para el scope de una reunión."""
@@ -375,12 +432,14 @@ def render_reuniones_screen(user: dict, supabase):
     # -------------------------
     with tab_prog:
         st.subheader("📅 Actividades Programadas")
-        st.caption("Actividades con fecha de hoy o futura que aún no fueron confirmadas.")
+        st.caption("Actividades aún no confirmadas. Las vencidas (fecha pasada sin confirmar) "
+                   "permanecen acá marcadas como vencidas hasta que se resuelvan.")
 
-        # Fetch programadas
+        # Fetch programadas: TODAS las pendientes (realizada IS NULL), sin filtro de fecha,
+        # para que las vencidas sin confirmar no desaparezcan ni pasen solas al Historial.
         hoy = datetime.date.today()
+        hoy_str = str(hoy)
         df_prog = fetch_reuniones(supabase, user, filters={
-            "fecha_desde": hoy,
             "solo_programadas": True,
         })
 
@@ -404,13 +463,16 @@ def render_reuniones_screen(user: dict, supabase):
             
             for idx, row in df_prog.iterrows():
                 with st.container(border=True):
-                    c1, c2, c3 = st.columns([3, 1, 1])
+                    es_vencida = str(row.get('fecha')) < hoy_str
+                    c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
                     with c1:
                         hora_str = str(row['hora'])[:5] if row.get('hora') else ""
                         tipo_label = row.get('subtipo_reunion') or row['tipo']
                         fecha_hora = f"**{row['fecha']}**" + (f" — {hora_str}" if hora_str else "")
                         st.markdown(f"{fecha_hora} — {tipo_label}")
                         st.markdown(f"_{row['titulo'] or 'Sin título'}_")
+                        if es_vencida:
+                            st.markdown("⚠️ **Vencida — pendiente de confirmar**")
                         if row.get('lugar'):
                             st.caption(f"📍 {row['lugar']}")
                         if es_segmentos:
@@ -431,6 +493,23 @@ def render_reuniones_screen(user: dict, supabase):
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"No se pudo actualizar la reunión. Intentá de nuevo.")
+                    with c4:
+                        if _can_delete_reunion(row, user):
+                            _ck = f"confirm_del_reunion_{row['id']}"
+                            if not st.session_state.get(_ck):
+                                if st.button("🗑️ Eliminar", key=f"btn_del_reunion_{row['id']}"):
+                                    st.session_state[_ck] = True
+                                    st.rerun()
+                            else:
+                                st.caption("¿Eliminar?")
+                                if st.button("✅ Sí", key=f"btn_del_reunion_yes_{row['id']}"):
+                                    ok, msg = delete_reunion(supabase, user, int(row['id']))
+                                    st.session_state[_ck] = False
+                                    (st.success if ok else st.error)(msg)
+                                    st.rerun()
+                                if st.button("❌ No", key=f"btn_del_reunion_no_{row['id']}"):
+                                    st.session_state[_ck] = False
+                                    st.rerun()
 
     # -------------------------
     # TAB 2: HISTORIAL (fecha < hoy O realizada = TRUE)
@@ -512,6 +591,42 @@ def render_reuniones_screen(user: dict, supabase):
                 )
 
             st.dataframe(df_display, use_container_width=True, hide_index=True)
+
+            # --- Eliminar una actividad propia del historial ---
+            df_own = df_hist[df_hist.apply(lambda r: _can_delete_reunion(r, user), axis=1)]
+            if not df_own.empty:
+                with st.container(border=True):
+                    st.markdown("##### 🗑️ Eliminar una actividad propia")
+                    opts = {
+                        f"{r['fecha']} — {(r.get('titulo') or 'Sin título')} (id={r['id']})": int(r['id'])
+                        for _, r in df_own.iterrows()
+                    }
+                    sel_label = st.selectbox(
+                        "Seleccioná una actividad para eliminar",
+                        ["—"] + list(opts.keys()),
+                        key="hist_del_sel",
+                    )
+                    if sel_label != "—":
+                        rid_del = opts[sel_label]
+                        _ckh = f"confirm_del_reunion_hist_{rid_del}"
+                        if not st.session_state.get(_ckh):
+                            if st.button("🗑️ Eliminar actividad", key=f"btn_del_hist_{rid_del}"):
+                                st.session_state[_ckh] = True
+                                st.rerun()
+                        else:
+                            st.warning("¿Confirmás eliminar esta actividad? Se borrarán también "
+                                       "sus asistentes e interacciones asociadas.")
+                            cdh1, cdh2 = st.columns(2)
+                            with cdh1:
+                                if st.button("✅ Sí, eliminar", key=f"btn_del_hist_yes_{rid_del}"):
+                                    ok, msg = delete_reunion(supabase, user, rid_del)
+                                    st.session_state[_ckh] = False
+                                    (st.success if ok else st.error)(msg)
+                                    st.rerun()
+                            with cdh2:
+                                if st.button("❌ No", key=f"btn_del_hist_no_{rid_del}"):
+                                    st.session_state[_ckh] = False
+                                    st.rerun()
 
             # Detalles expandibles
             if st.checkbox("Ver descripciones desarrolladas", key="hist_descripciones"):
