@@ -216,7 +216,7 @@ def delete_reunion(supabase, user: dict, reunion_id: int):
 
     Devuelve (ok: bool, mensaje: str).
     """
-    rid = int(reunion_id)
+    rid = reunion_id  # reuniones.id es UUID: NO castear a int.
     es_global = permisos.is_global_master(user)
     try:
         chk = supabase.table("reuniones").select("id, created_by_user_id").eq("id", rid).limit(1).execute()
@@ -503,7 +503,7 @@ def render_reuniones_screen(user: dict, supabase):
                             else:
                                 st.caption("¿Eliminar?")
                                 if st.button("✅ Sí", key=f"btn_del_reunion_yes_{row['id']}"):
-                                    ok, msg = delete_reunion(supabase, user, int(row['id']))
+                                    ok, msg = delete_reunion(supabase, user, row['id'])
                                     st.session_state[_ck] = False
                                     (st.success if ok else st.error)(msg)
                                     st.rerun()
@@ -598,7 +598,7 @@ def render_reuniones_screen(user: dict, supabase):
                 with st.container(border=True):
                     st.markdown("##### 🗑️ Eliminar una actividad propia")
                     opts = {
-                        f"{r['fecha']} — {(r.get('titulo') or 'Sin título')} (id={r['id']})": int(r['id'])
+                        f"{r['fecha']} — {(r.get('titulo') or 'Sin título')} (id={r['id']})": r['id']
                         for _, r in df_own.iterrows()
                     }
                     sel_label = st.selectbox(
