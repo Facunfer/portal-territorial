@@ -294,10 +294,37 @@ def _is_fk_violation(exc: Exception) -> bool:
     return ("foreign key" in msg) or ("violates foreign key" in msg) or ("23503" in msg)
 
 
+def _apply_users_scope_guard(query, user: dict):
+    """Aplica al query (delete/update sobre usuarios) el MISMO scope con el que
+    el usuario ve la grilla (permisos.users_scope):
+      - COMUNA          -> comuna_id = user.comuna_id
+      - USERS_VERTICAL  -> ambito + vertical del usuario
+      - ALL (Global Master) -> sin filtros adicionales
+    Así, aunque se fuerce la UI, solo se afecta a usuarios del propio ámbito."""
+    scope = permisos.users_scope(user)
+    if scope.kind == "COMUNA":
+        if user.get("comuna_id") is not None:
+            query = query.eq("comuna_id", int(user["comuna_id"]))
+        else:
+            # Sin comuna definida: por seguridad, no afectar a nadie.
+            query = query.eq("id", -1)
+    elif scope.kind == "USERS_VERTICAL":
+        parts = (scope.value or "").split("|", 1)
+        amb = parts[0].strip() if len(parts) > 0 else ""
+        vert = parts[1].strip() if len(parts) > 1 else ""
+        if amb:
+            query = query.eq("ambito", amb)
+        if vert:
+            query = query.eq("vertical", vert)
+    # scope ALL (Global Master) -> sin filtros adicionales.
+    return query
+
+
 def delete_usuario(user: dict, uid: int):
-    """Elimina (hard delete) un usuario propio. Guard server-side por autoría:
-    salvo Global Master, el DELETE filtra creado_por = user.id, de modo que
-    aunque se fuerce la UI solo se borran usuarios propios.
+    """Elimina (hard delete) un usuario dentro del ámbito del que borra. Guard
+    server-side por scope (comuna/vertical): aunque se fuerce la UI, solo se
+    afecta a usuarios del propio ámbito. El Global Master puede borrar cualquiera.
+    Nunca se borra a sí mismo.
 
     Si el usuario tiene datos históricos que lo referencian (asociaciones,
     interacciones de asociaciones, seguimientos, mapa, otros usuarios creados;
@@ -311,28 +338,25 @@ def delete_usuario(user: dict, uid: int):
     Devuelve (hard_deleted: bool, mensaje: str).
     """
     supabase = get_supabase()
-    es_global = permisos.is_global_master(user)
     uid = int(uid)
+    if uid == int(user["id"]):
+        return False, "No podés eliminarte a vos mismo."
 
     try:
-        q = supabase.table("usuarios").delete().eq("id", uid)
-        if not es_global:
-            q = q.eq("creado_por", int(user["id"]))
+        q = _apply_users_scope_guard(supabase.table("usuarios").delete().eq("id", uid), user)
         res = q.execute()
         if not res.data:
-            return False, "No se eliminó ningún usuario (no sos quien lo creó o ya no existe)."
+            return False, "No se eliminó ningún usuario (fuera de tu ámbito o ya no existe)."
         return True, "Usuario eliminado correctamente."
     except Exception as exc:
         if not _is_fk_violation(exc):
             return False, f"Error al eliminar el usuario: {exc}"
         # Tiene datos históricos asociados: degradamos a desactivación (mismo guard).
         try:
-            q = supabase.table("usuarios").update({"activo": False}).eq("id", uid)
-            if not es_global:
-                q = q.eq("creado_por", int(user["id"]))
+            q = _apply_users_scope_guard(supabase.table("usuarios").update({"activo": False}).eq("id", uid), user)
             res = q.execute()
             if not res.data:
-                return False, "No se pudo desactivar el usuario (no sos quien lo creó o ya no existe)."
+                return False, "No se pudo desactivar el usuario (fuera de tu ámbito o ya no existe)."
             return False, ("El usuario tiene datos históricos asociados, así que no se puede "
                            "eliminar definitivamente. Se DESACTIVÓ en su lugar.")
         except Exception as exc2:
@@ -1102,15 +1126,11 @@ def render(user: dict):
                     if uid:
                         st.info(f"Mostrando asignaciones para: **{u_user}** (Rol: {u_rol})")
 
-                        # --- Eliminar usuario (solo los que creó el referente; Global Master, cualquiera) ---
-                        _creador = sel_user.get("creado_por")
-                        try:
-                            _creador = int(_creador) if _creador not in (None, "") else None
-                        except (TypeError, ValueError):
-                            _creador = None
-                        _es_propio = (_creador is not None and _creador == int(user["id"]))
-                        _es_self = (int(uid) == int(user["id"]))
-                        _puede_borrar = (permisos.is_global_master(user) or _es_propio) and not _es_self
+                        # --- Eliminar usuario (cualquiera de su ámbito; nunca a sí mismo) ---
+                        # La grilla ya está filtrada por scope (_fetch_users_for_admin), así que
+                        # toda fila visible es del ámbito del que administra; igual el borrado
+                        # re-aplica el guard de scope server-side en delete_usuario().
+                        _puede_borrar = (int(uid) != int(user["id"]))
 
                         if _puede_borrar:
                             _confirm_key = f"confirm_del_user_{uid}"

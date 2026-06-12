@@ -16,11 +16,16 @@
 ALTER TABLE usuarios
     ADD COLUMN IF NOT EXISTS creado_por integer REFERENCES usuarios(id);
 
--- Los usuarios históricos quedan con creado_por = NULL:
---   * NO son borrables por referentes (el guard exige creado_por = user.id).
---   * Solo el Global Master puede borrarlos (filtra solo por id).
+-- creado_por se completa al crear usuarios desde la UI (auditoría: quién lo creó).
 -- El código (usuarios_admin._insert_usuario) tolera que esta columna no exista:
 -- si PostgREST responde que falta, reintenta el insert sin ella.
+--
+-- NOTA sobre el BORRADO de usuarios: el guard NO usa creado_por, usa el SCOPE del
+-- que administra (permisos.users_scope): un referente de COMUNA puede borrar
+-- cualquier usuario de su comuna (filtro comuna_id), un referente VERTICAL los de
+-- su ambito+vertical, y el Global Master cualquiera. Nunca a sí mismo. Por eso
+-- los usuarios históricos (creado_por = NULL) TAMBIÉN son borrables por el
+-- referente del ámbito correspondiente.
 
 
 -- =============================================================================
@@ -62,9 +67,9 @@ ALTER TABLE usuarios
 --   usuarios.creado_por                         -> NO ACTION   (BLOQUEA si creó otros)
 --   (No existe FK reuniones.created_by_user_id -> usuarios)
 --
--- DECISIÓN (acordada en el prompt): NO destruir datos históricos para forzar el
--- borrado. Por eso el código intenta el HARD DELETE y, si falla por constraint
--- FK, DEGRADA a desactivación (activo = false) con el mismo guard de autoría.
+-- DECISIÓN (acordada): NO destruir datos históricos para forzar el borrado. Por
+-- eso el código intenta el HARD DELETE y, si falla por constraint FK, DEGRADA a
+-- desactivación (activo = false) con el mismo guard de scope.
 -- El caso típico (un EXTRACTO recién creado sin historial) sí se borra de verdad.
 --
 -- Si en el futuro querés que ciertos usuarios SÍ se puedan borrar en duro sin
