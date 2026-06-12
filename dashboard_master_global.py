@@ -495,7 +495,9 @@ def render_dashboard_master_global(user):
             ip_comunas = ip["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
             bar_p = _barras_por_comuna(ip_comunas, "Interacciones", comunas_universe)
             fig_bp = px.bar(bar_p, x="Comuna", y="Interacciones", title="Interacciones de Personas por Comuna")
-            fig_bp.update_xaxes(categoryorder="total descending")
+            # type="category" evita que plotly trate las comunas numéricas como eje lineal
+            # (si no, ignora el orden); "total descending" ordena las barras por cantidad.
+            fig_bp.update_xaxes(type="category", categoryorder="total descending")
             st.plotly_chart(fig_bp, use_container_width=True)
         else:
             st.info("Sin interacciones con Personas en este rango.")
@@ -515,7 +517,7 @@ def render_dashboard_master_global(user):
             ia_comunas = ia["comuna_id"].apply(lambda v: _norm_comuna(v) or "Desconocido")
             bar_a = _barras_por_comuna(ia_comunas, "Interacciones", comunas_universe)
             fig_ba = px.bar(bar_a, x="Comuna", y="Interacciones", title="Visitas a Asociaciones por Comuna")
-            fig_ba.update_xaxes(categoryorder="total descending")
+            fig_ba.update_xaxes(type="category", categoryorder="total descending")
             st.plotly_chart(fig_ba, use_container_width=True)
         else:
             st.info("Sin visitas a Asociaciones en este rango.")
@@ -548,7 +550,7 @@ def render_dashboard_master_global(user):
                 r_comunas = r_com["scope_valor"].apply(lambda v: _norm_comuna(v) or "Desconocido")
                 bar_r = _barras_por_comuna(r_comunas, "Reuniones", comunas_universe)
                 fig_rc = px.bar(bar_r, x="Comuna", y="Reuniones", title="Reuniones por Comuna")
-                fig_rc.update_xaxes(categoryorder="total descending")
+                fig_rc.update_xaxes(type="category", categoryorder="total descending")
                 st.plotly_chart(fig_rc, use_container_width=True)
 
     with tab_calidad:
