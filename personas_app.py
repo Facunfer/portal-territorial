@@ -1187,6 +1187,9 @@ def personas_screen():
         st.session_state["show_mass_interaction"] = False
     if "show_casos_personas" not in st.session_state:
         st.session_state["show_casos_personas"] = False
+    # Selección acumulada del modo masivo (fuente de verdad, persiste entre reruns).
+    if "mass_selected_ids" not in st.session_state:
+        st.session_state["mass_selected_ids"] = set()
     
     is_mass_mode = st.session_state["show_mass_interaction"]
     selection_mode = "multiple" if is_mass_mode else "single"
@@ -1236,7 +1239,22 @@ def personas_screen():
         # Habilitamos checkbox específicamente en la primera columna (id o nombre_apellido)
         first_col = dff_show.columns[0]
         gb.configure_column(first_col, checkboxSelection=True, headerCheckboxSelection=True)
-        gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+        # Restaurar la selección acumulada tras cada rerun: calculamos los índices
+        # posicionales de dff_show cuyas id están en el set persistido.
+        prev_ids = set(st.session_state.get("mass_selected_ids", set()))
+        pre_selected_rows = []
+        if "id" in dff_show.columns:
+            for i, _id in enumerate(dff_show["id"].tolist()):
+                try:
+                    if int(_id) in prev_ids:
+                        pre_selected_rows.append(i)
+                except (TypeError, ValueError):
+                    pass
+        gb.configure_selection(
+            selection_mode="multiple",
+            use_checkbox=True,
+            pre_selected_rows=pre_selected_rows,
+        )
     else:
         gb.configure_selection(selection_mode="single", use_checkbox=False)
     grid_options = gb.build()
@@ -1273,6 +1291,9 @@ def personas_screen():
             if st.session_state["show_mass_interaction"]:
                 st.session_state["ficha_abierta"] = False
                 st.session_state["selected_persona_id"] = None
+            else:
+                # Al cancelar la masiva, limpiamos la selección acumulada.
+                st.session_state["mass_selected_ids"] = set()
             st.rerun()
 
     if st.session_state["show_casos_personas"]:
@@ -1287,9 +1308,30 @@ def personas_screen():
             selected_list = selected_rows
         elif isinstance(selected_rows, pd.DataFrame):
             selected_list = selected_rows.to_dict("records")
-            
-        ids_selected = [int(r["id"]) for r in selected_list if r.get("id")]
-        
+
+        nuevos_ids = []
+        for r in selected_list:
+            try:
+                if r.get("id") is not None:
+                    nuevos_ids.append(int(r["id"]))
+            except (TypeError, ValueError):
+                pass
+
+        # Acumular en session_state (fuente de verdad), igual que en reuniones_app:
+        # cada rerun une la selección previa con la nueva para no perder clicks.
+        combinados = set(st.session_state.get("mass_selected_ids", set())) | set(nuevos_ids)
+        st.session_state["mass_selected_ids"] = combinados
+        ids_selected = sorted(combinados)
+
+        # Contador + botón para limpiar la selección acumulada
+        csel1, csel2 = st.columns([2, 1])
+        with csel1:
+            st.caption(f"Seleccionadas: {len(ids_selected)}")
+        with csel2:
+            if ids_selected and st.button("🧹 Limpiar selección", key="btn_clear_mass_sel", use_container_width=True):
+                st.session_state["mass_selected_ids"] = set()
+                st.rerun()
+
         if not ids_selected:
             st.warning("Seleccioná al menos una persona en la tabla para cargar interacción.")
         else:
@@ -1328,6 +1370,7 @@ def personas_screen():
                     except Exception as _e:
                         st.error(f"Error al guardar interacciones: {_e}")
                     st.session_state["show_mass_interaction"] = False
+                    st.session_state["mass_selected_ids"] = set()
                     st.rerun()
 
     # ---------------------------------------------------------
