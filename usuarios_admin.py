@@ -45,7 +45,7 @@ LOCALE_ES = {
 def _fetch_users_for_admin(user: dict) -> pd.DataFrame:
     supabase = get_supabase()
 
-    cols = "id, username, tipo_usuario, ambito, vertical, rol, comuna_id, activo"
+    cols = "id, username, tipo_usuario, ambito, vertical, rol, comuna_id, activo, creado_por"
     q = supabase.table("usuarios").select(cols).order("id", desc=False)
 
     scope = permisos.users_scope(user)
@@ -258,21 +258,85 @@ def _insert_asignaciones(usuario_id: int, personas_ids: list[int], asociaciones_
     supabase.table("usuarios_asignaciones").insert(rows).execute()
 
 
-def _is_missing_es_original_error(exc: Exception) -> bool:
+def _is_missing_column_error(exc: Exception, col: str) -> bool:
     msg = str(exc)
-    return "es_original" in msg and ("schema cache" in msg or "does not exist" in msg or "column" in msg)
+    return col in msg and ("schema cache" in msg or "does not exist" in msg or "column" in msg)
+
+
+def _is_missing_es_original_error(exc: Exception) -> bool:
+    return _is_missing_column_error(exc, "es_original")
 
 
 def _insert_usuario(payload: dict):
+    """Inserta un usuario, tolerando que columnas opcionales (es_original,
+    creado_por) no existan todavía en el esquema: si PostgREST responde que la
+    columna no existe, la quita del payload y reintenta."""
     supabase = get_supabase()
+    payload = dict(payload)
+    optional_cols = ["es_original", "creado_por"]
+    while True:
+        try:
+            return supabase.table("usuarios").insert(payload).execute()
+        except Exception as exc:
+            dropped = False
+            for col in optional_cols:
+                if col in payload and _is_missing_column_error(exc, col):
+                    payload.pop(col, None)
+                    dropped = True
+                    break
+            if not dropped:
+                raise
+
+
+def _is_fk_violation(exc: Exception) -> bool:
+    """Detecta violaciones de clave foránea (FK NO ACTION / RESTRICT)."""
+    msg = str(exc).lower()
+    return ("foreign key" in msg) or ("violates foreign key" in msg) or ("23503" in msg)
+
+
+def delete_usuario(user: dict, uid: int):
+    """Elimina (hard delete) un usuario propio. Guard server-side por autoría:
+    salvo Global Master, el DELETE filtra creado_por = user.id, de modo que
+    aunque se fuerce la UI solo se borran usuarios propios.
+
+    Si el usuario tiene datos históricos que lo referencian (asociaciones,
+    interacciones de asociaciones, seguimientos, mapa, otros usuarios creados;
+    todas con FK NO ACTION / RESTRICT) el borrado falla por constraint. En ese
+    caso NO se destruyen datos históricos: se degrada a desactivación (activo=False).
+
+    usuarios_asignaciones tiene ON DELETE CASCADE, por lo que se eliminan solas
+    al borrar el usuario (no hace falta borrarlas antes; además, así no se pierden
+    las asignaciones si terminamos degradando a desactivación).
+
+    Devuelve (hard_deleted: bool, mensaje: str).
+    """
+    supabase = get_supabase()
+    es_global = permisos.is_global_master(user)
+    uid = int(uid)
+
     try:
-        return supabase.table("usuarios").insert(payload).execute()
+        q = supabase.table("usuarios").delete().eq("id", uid)
+        if not es_global:
+            q = q.eq("creado_por", int(user["id"]))
+        res = q.execute()
+        if not res.data:
+            return False, "No se eliminó ningún usuario (no sos quien lo creó o ya no existe)."
+        return True, "Usuario eliminado correctamente."
     except Exception as exc:
-        if not _is_missing_es_original_error(exc):
-            raise
-        payload_sin_original = dict(payload)
-        payload_sin_original.pop("es_original", None)
-        return supabase.table("usuarios").insert(payload_sin_original).execute()
+        if not _is_fk_violation(exc):
+            return False, f"Error al eliminar el usuario: {exc}"
+        # Tiene datos históricos asociados: degradamos a desactivación (mismo guard).
+        try:
+            q = supabase.table("usuarios").update({"activo": False}).eq("id", uid)
+            if not es_global:
+                q = q.eq("creado_por", int(user["id"]))
+            res = q.execute()
+            if not res.data:
+                return False, "No se pudo desactivar el usuario (no sos quien lo creó o ya no existe)."
+            return False, ("El usuario tiene datos históricos asociados, así que no se puede "
+                           "eliminar definitivamente. Se DESACTIVÓ en su lugar.")
+        except Exception as exc2:
+            return False, f"No se pudo eliminar ni desactivar el usuario: {exc2}"
 
 
 def _delete_asignaciones(usuario_id: int, objeto_tipo: str, object_ids: list[int]):
@@ -981,6 +1045,12 @@ def render(user: dict):
     # Ver usuarios existentes
     # =========================
     with st.expander("👀 Ver usuarios existentes", expanded=True):
+        # Mensaje diferido (flash) tras una acción que hizo rerun (ej. borrado).
+        _flash = st.session_state.pop("_user_admin_flash", None)
+        if _flash:
+            _lvl, _msg = _flash
+            getattr(st, _lvl, st.info)(_msg)
+
         df = _fetch_users_for_admin(user)
 
         if df.empty:
@@ -1031,7 +1101,37 @@ def render(user: dict):
                     
                     if uid:
                         st.info(f"Mostrando asignaciones para: **{u_user}** (Rol: {u_rol})")
-                        
+
+                        # --- Eliminar usuario (solo los que creó el referente; Global Master, cualquiera) ---
+                        _creador = sel_user.get("creado_por")
+                        try:
+                            _creador = int(_creador) if _creador not in (None, "") else None
+                        except (TypeError, ValueError):
+                            _creador = None
+                        _es_propio = (_creador is not None and _creador == int(user["id"]))
+                        _es_self = (int(uid) == int(user["id"]))
+                        _puede_borrar = (permisos.is_global_master(user) or _es_propio) and not _es_self
+
+                        if _puede_borrar:
+                            _confirm_key = f"confirm_del_user_{uid}"
+                            if not st.session_state.get(_confirm_key):
+                                if st.button("🗑️ Eliminar usuario", key=f"btn_del_user_{uid}"):
+                                    st.session_state[_confirm_key] = True
+                                    st.rerun()
+                            else:
+                                st.warning(f"¿Confirmás eliminar a **{u_user}**? Esta acción no se puede deshacer.")
+                                cdel1, cdel2 = st.columns(2)
+                                with cdel1:
+                                    if st.button("✅ Sí, eliminar", key=f"btn_del_user_yes_{uid}"):
+                                        hard, msg = delete_usuario(user, int(uid))
+                                        st.session_state[_confirm_key] = False
+                                        st.session_state["_user_admin_flash"] = ("success" if hard else "warning", msg)
+                                        st.rerun()
+                                with cdel2:
+                                    if st.button("❌ No", key=f"btn_del_user_no_{uid}"):
+                                        st.session_state[_confirm_key] = False
+                                        st.rerun()
+
                         if (u_rol or "").upper() == "EXTRACTO":
                             df_p_asig, df_a_asig = _fetch_asignaciones_detalle(uid)
                             
@@ -1198,6 +1298,8 @@ def render(user: dict):
                 "comuna_id": int(comuna_id) if comuna_id is not None else None,
                 # Los usuarios creados desde UI nunca son originales; solo Supabase puede promoverlos.
                 "es_original": False,
+                # Quién creó este usuario (para que el referente pueda administrar/borrar los suyos).
+                "creado_por": user.get("id"),
             }
 
             # reglas duras (igual a lo que venías usando)
@@ -1272,10 +1374,11 @@ def render(user: dict):
                 st.error(f"Error creando usuario: {e}")
 
     # =========================
-    # Cambiar contraseña de un usuario existente
+    # Cambiar contraseña de un usuario existente (solo Global Master)
     # =========================
-    st.markdown("---")
-    with st.expander("🔑 Cambiar contraseña de usuario existente"):
+    if permisos.is_global_master(user):
+      st.markdown("---")
+      with st.expander("🔑 Cambiar contraseña de usuario existente"):
         st.caption("Usá esto para resetear la contraseña de cualquier usuario de tu ámbito.")
 
         # Obtener lista de usuarios visibles
