@@ -9,7 +9,7 @@ import personas_edicion
 
 # Mapeo vertical → tag en personas
 VERTICAL_TAG_MAP = {
-    "GENERACION_PLATEADA": "GENERACIÓN PLATEADA",
+    "GENERACION_PLATEADA": "LIBERTAD PLATEADA",
     "MIGRANTES":           "MIGRANTE",
     "CULTO":               "CULTO",
     "CCAA":                "COMERCIANTE",
@@ -31,7 +31,7 @@ VERTICAL_TIPO_MAP = {
 
 # Labels legibles para mostrar en el selector
 VERTICAL_LABELS = {
-    "GENERACION_PLATEADA":   "Generación Plateada",
+    "GENERACION_PLATEADA":   "Libertad Plateada",
     "MIGRANTES":             "Migrantes",
     "CULTO":                 "Culto",
     "CCAA":                  "CCAA",

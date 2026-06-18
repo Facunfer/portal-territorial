@@ -107,7 +107,7 @@ def personas_scope(user: dict) -> Scope:
     if is_vertical_personas(user):
         tag_map = {
             "JUVENTUD": "JUVENTUD|BASES|UNIVERSIDAD",
-            "GENERACION_PLATEADA": "GENERACIÓN PLATEADA",
+            "GENERACION_PLATEADA": "LIBERTAD PLATEADA",
             "MIGRANTES": "MIGRANTE",
             "PROFESIONALES": "PROFESIONAL",
             "CULTO": "CULTO",

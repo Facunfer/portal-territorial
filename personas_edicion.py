@@ -13,7 +13,7 @@ from db import get_supabase
 # =========================
 TAGS_SUGERIDOS = [
     "JUVENTUD",
-    "GENERACIÓN PLATEADA",
+    "LIBERTAD PLATEADA",
     "MIGRANTE",
     "PROFESIONAL",
     "FISCAL OCTUBRE",
