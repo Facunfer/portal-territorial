@@ -960,7 +960,7 @@ def asociaciones_screen():
         
         with c2:
             fb_vals = sorted(df["ultimo_feedback"].unique().tolist())
-            sel_fb = st.selectbox("Feedback", ["Todos"] + fb_vals, index=0, key="asoc_flt_fb")
+            sel_fb = st.selectbox("Termómetro", ["Todos"] + fb_vals, index=0, key="asoc_flt_fb")
             
         with c3:
             est_asign_opts = sorted(df["estado_asignacion"].unique().tolist())

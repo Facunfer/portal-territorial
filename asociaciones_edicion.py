@@ -415,7 +415,7 @@ def render_casos_asignados(user):
             st.markdown("### Cargar interacción por seguimiento")
 
             fecha = st.date_input("Fecha", value=datetime.date.today(), key=f"asoc_seg_fecha_{c['id']}")
-            respuesta = st.selectbox("Feedback / Resultado", RESPUESTAS_ASOC, index=3, key=f"asoc_seg_resp_{c['id']}")
+            respuesta = st.selectbox("Termómetro / Resultado", RESPUESTAS_ASOC, index=3, key=f"asoc_seg_resp_{c['id']}")
             medio = st.selectbox("Medio", MEDIOS, index=0, key=f"asoc_seg_medio_{c['id']}")
 
             para_que = st.text_input("Motivo / Para qué fui o contacté", value="", key=f"asoc_seg_para_{c['id']}")
@@ -483,7 +483,7 @@ def render_ficha_asociacion(user, asoc_id: int):
     with c2:
         st.write("**Último evento (fecha):**")
         st.write(str(ultima_fecha_evento) if ultima_fecha_evento else "-")
-        st.write("**Feedback (última interacción real):**")
+        st.write("**Termómetro (última interacción real):**")
         st.write(ultimo_feedback)
 
     st.markdown("---")
@@ -586,7 +586,7 @@ def render_ficha_asociacion(user, asoc_id: int):
         with c3:
             fecha = st.date_input("Fecha", value=datetime.date.today(), key=f"asoc_int_fecha_{asoc_id}")
         with c4:
-            respuesta = st.selectbox("Feedback / Resultado", RESPUESTAS_ASOC, index=3, key=f"asoc_int_resp_{asoc_id}")
+            respuesta = st.selectbox("Termómetro / Resultado", RESPUESTAS_ASOC, index=3, key=f"asoc_int_resp_{asoc_id}")
         with c5:
             medio = st.selectbox("Medio", MEDIOS, index=0, key=f"asoc_int_medio_{asoc_id}")
 
