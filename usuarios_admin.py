@@ -812,7 +812,7 @@ def _render_assignment_selector(viewer_user: dict, target_conf: dict, key_prefix
 
                 with c_f2:
                     sem_r_opts = sorted(df_show["semaforo_respuesta"].unique().tolist())
-                    sel_sem_r = st.multiselect("Semáforo Respuesta", options=sem_r_opts, key=f"{key_prefix}_p_semr")
+                    sel_sem_r = st.multiselect("Termómetro", options=sem_r_opts, key=f"{key_prefix}_p_semr")
                     
                     est_asign_opts = sorted(df_show["estado_asignacion"].unique().tolist())
                     sel_est_asign = st.multiselect("Estado Asignación", options=est_asign_opts, key=f"{key_prefix}_p_est_asign")
@@ -958,7 +958,7 @@ def _render_assignment_selector(viewer_user: dict, target_conf: dict, key_prefix
 
             with c_vert_2:
                 sem_r_opts = sorted(df_show["semaforo_respuesta"].unique().tolist())
-                sel_sem_r = st.multiselect("Semáforo Respuesta", options=sem_r_opts, key=f"{key_prefix}_vp_semr")
+                sel_sem_r = st.multiselect("Termómetro", options=sem_r_opts, key=f"{key_prefix}_vp_semr")
                 est_asign_opts = sorted(df_show["estado_asignacion"].unique().tolist())
                 sel_est_asign = st.multiselect("Estado Asignación", options=est_asign_opts, key=f"{key_prefix}_vp_est")
 

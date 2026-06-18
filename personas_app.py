@@ -1038,7 +1038,7 @@ def personas_screen():
             filtro_tiempo = st.selectbox("Semáforo Tiempo", ["Todos"] + tiempo_vals, index=0, key="flt_tiempo")
             
             resp_vals = sorted(df["semaforo_respuesta"].unique().tolist())
-            filtro_resp = st.selectbox("Semáforo Respuesta", ["Todos"] + resp_vals, index=0, key="flt_resp")
+            filtro_resp = st.selectbox("Termómetro", ["Todos"] + resp_vals, index=0, key="flt_resp")
 
         # COL 4
         with c4:
@@ -1232,6 +1232,7 @@ def personas_screen():
     gb.configure_column("ultima_resp", headerName="Resultado")
     gb.configure_column("cargado_por", headerName="Interacción por")
     gb.configure_column("asignado_a", headerName="Asignado a")
+    gb.configure_column("semaforo_respuesta", headerName="Termómetro")
     gb.configure_column("ultima_fecha_dt", hide=True)
     
     # Checkbox selection for mass mode
