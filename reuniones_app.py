@@ -15,6 +15,7 @@ TIPOS_ACTIVIDAD = [
     "Reunión",
     "Caminata",
     "Charla",
+    "Capacitación",
     "Otro",
 ]
 
@@ -297,11 +298,20 @@ def render_reuniones_screen(user: dict, supabase):
             key=f"tipo_act_{fkey}"
         )
         subtipo_reunion = None
+        detalle_actividad = None
         if tipo == "Reunión":
             subtipo_reunion = st.selectbox(
                 "Tipo de Reunión *",
                 SUBTIPOS_REUNION,
                 key=f"subtipo_act_{fkey}"
+            )
+        else:
+            # Mismo patrón condicional que el subtipo: para tipos != "Reunión"
+            # mostramos un campo de comentario. Se persiste en reuniones.descripcion.
+            detalle_actividad = st.text_area(
+                "Detalle de la actividad",
+                placeholder="Comentá brevemente la actividad...",
+                key=f"detalle_act_{fkey}"
             )
 
         st.markdown("---")
@@ -378,7 +388,13 @@ def render_reuniones_screen(user: dict, supabase):
                 lugar = st.text_input("Lugar *", placeholder="Ej: Club Social Comuna 1")
                 titulo = st.text_input("Título / Tema (Opcional)", placeholder="Ej: Mesa de trabajo Jóvenes")
             with c2:
-                descripcion = st.text_area("Descripción / Notas", placeholder="Resumen de lo hablado...", height=180)
+                if tipo == "Reunión":
+                    descripcion = st.text_area("Descripción / Notas", placeholder="Resumen de lo hablado...", height=180)
+                else:
+                    # Para otros tipos, el comentario se carga arriba ("Detalle de la actividad")
+                    # y es lo que se guarda como descripción; evitamos un segundo campo redundante.
+                    descripcion = None
+                    st.caption("ℹ️ El detalle de la actividad se carga arriba, junto al tipo.")
 
             submit = st.form_submit_button("✅ Guardar actividad", use_container_width=True)
 
@@ -398,13 +414,17 @@ def render_reuniones_screen(user: dict, supabase):
                         hoy = datetime.date.today()
                         es_pasada = fecha < hoy
 
+                        # Para "Reunión" la descripción viene del campo del form; para el resto,
+                        # del comentario "Detalle de la actividad" cargado arriba.
+                        final_descripcion = descripcion if tipo == "Reunión" else detalle_actividad
+
                         insert_reunion(supabase, user, {
                             "fecha":           fecha,
                             "hora":            hora,
                             "tipo":            tipo,
                             "subtipo_reunion": subtipo_reunion,
                             "titulo":          titulo.strip() if titulo.strip() else (subtipo_reunion or tipo),
-                            "descripcion":     descripcion,
+                            "descripcion":     final_descripcion,
                             "lugar":           lugar.strip(),
                             "realizada":       True if es_pasada else None,
                         }, asistentes_ids=selected_asistentes_ids)
