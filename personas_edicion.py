@@ -11,28 +11,10 @@ from db import get_supabase
 # =========================
 # Constantes
 # =========================
-TAGS_SUGERIDOS = [
-    "JUVENTUD",
-    "LIBERTAD PLATEADA",
-    "MIGRANTE",
-    "PROFESIONAL",
-    "FISCAL OCTUBRE",
-    "FISCAL MAYO",
-    "AFILIADO",
-    "PARTE DEL EQUIPO",
-    "FISCAL GENERAL",
-    "CULTO",
-    "PYME",
-    "COMERCIANTE",
-    "BASES",
-    "UNIVERSIDAD",
-    "VECINO EMBLEMATICO",
-    "PORTERO/ENCARGADO",
-    "EMPRENDEDOR", 
-    "EDUCACIÓN", 
-    "SALUD", 
-    "CULTURA",
-]
+# Fuente única de tags en constants.TAGS_FIJOS (incluye PARTICIPANDO y SACAR DE LA BASE).
+# Se mantiene el nombre TAGS_SUGERIDOS por compatibilidad con las referencias existentes.
+from constants import TAGS_FIJOS
+TAGS_SUGERIDOS = TAGS_FIJOS
 
 RESPUESTAS = ["POSITIVO", "NEUTRO", "NEGATIVO", "NO RESPONDIÓ", "NUMERO INEXISTENTE/EQUIVOCADO"]
 MEDIOS = ["WhatsApp", "Llamada", "Instagram", "Facebook", "Email", "Presencial", "Otro"]

@@ -11,6 +11,35 @@ VERTICALES_SEGMENTOS: list[str] = [
     "CULTURA",
 ]
 
+# Lista canónica de tags asignables a personas (personas.tags es text[]).
+# Fuente ÚNICA: alimenta el selector de alta/quita de tags en la ficha, el form de
+# nueva persona y las opciones del filtro de tags de la tabla. Respetar mayúsculas/acentos
+# exactos del literal (es lo que se guarda en personas.tags).
+TAGS_FIJOS: list[str] = [
+    "JUVENTUD",
+    "LIBERTAD PLATEADA",
+    "MIGRANTE",
+    "PROFESIONAL",
+    "FISCAL OCTUBRE",
+    "FISCAL MAYO",
+    "AFILIADO",
+    "PARTE DEL EQUIPO",
+    "FISCAL GENERAL",
+    "CULTO",
+    "PYME",
+    "COMERCIANTE",
+    "BASES",
+    "UNIVERSIDAD",
+    "VECINO EMBLEMATICO",
+    "PORTERO/ENCARGADO",
+    "EMPRENDEDOR",
+    "EDUCACIÓN",
+    "SALUD",
+    "CULTURA",
+    "PARTICIPANDO",
+    "SACAR DE LA BASE",
+]
+
 BARRIOS_POR_COMUNA: dict[int, list[str]] = {
     1: ["Retiro", "San Nicolás", "Puerto Madero", "San Telmo", "Montserrat", "Constitución"],
     2: ["Recoleta"],
