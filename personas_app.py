@@ -1224,10 +1224,20 @@ def personas_screen():
 
     # 2. Main AgGrid (Moved Up)
     gb = GridOptionsBuilder.from_dataframe(dff_show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=140, wrapText=True, autoHeight=True)
-    
-    # Configuración de columnas específicas
-    gb.configure_column("id", headerName="ID", width=100)
+    # Filtro "tipo Excel" por columna (ag-Grid Community): filtro + fila de floating filters
+    # bajo cada encabezado, filtrado en vivo client-side. Los st.multiselect de arriba siguen
+    # siendo los filtros server-side de alto nivel; esto es el ajuste fino por columna.
+    # OPCIÓN B (Set Filter con checkboxes estilo Excel) es feature de ag-Grid Enterprise:
+    # requeriría enable_enterprise_modules=True en AgGrid(...) y filter="agSetColumnFilter"
+    # por columna. Sin licencia corre en modo evaluación (marca de agua) → NO activar sin OK.
+    gb.configure_default_column(
+        sortable=True, filter=True, floatingFilter=True, resizable=True,
+        minWidth=140, wrapText=True, autoHeight=True,
+    )
+
+    # Configuración de columnas específicas (incluye tipo de filtro por dato)
+    gb.configure_column("id", headerName="ID", width=100, filter="agNumberColumnFilter")
+    gb.configure_column("comuna_id", filter="agNumberColumnFilter")
     gb.configure_column("ultima_fecha", headerName="Última fecha")
     gb.configure_column("ultima_resp", headerName="Resultado")
     gb.configure_column("cargado_por", headerName="Interacción por")
