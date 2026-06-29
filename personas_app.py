@@ -1249,7 +1249,14 @@ def personas_screen():
     if is_mass_mode:
         # Habilitamos checkbox específicamente en la primera columna (id o nombre_apellido)
         first_col = dff_show.columns[0]
-        gb.configure_column(first_col, checkboxSelection=True, headerCheckboxSelection=True)
+        # headerCheckboxSelectionFilteredOnly: el "seleccionar todo" del encabezado solo
+        # toma las filas que pasan el filtro de columna (floating filter), no toda la base.
+        gb.configure_column(
+            first_col,
+            checkboxSelection=True,
+            headerCheckboxSelection=True,
+            headerCheckboxSelectionFilteredOnly=True,
+        )
         # Restaurar la selección acumulada tras cada rerun: calculamos los índices
         # posicionales de dff_show cuyas id están en el set persistido.
         prev_ids = set(st.session_state.get("mass_selected_ids", set()))
