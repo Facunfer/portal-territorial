@@ -1263,35 +1263,10 @@ def personas_screen():
             headerCheckboxSelection=True,
             headerCheckboxSelectionFilteredOnly=True,
         )
-        # IDs visibles según los filtros server-side (multiselect de arriba).
-        mass_visible_ids = []
-        if "id" in dff_show.columns:
-            for _id in dff_show["id"].tolist():
-                try:
-                    mass_visible_ids.append(int(_id))
-                except (TypeError, ValueError):
-                    pass
-        mass_visible_set = set(mass_visible_ids)
-        prev_ids = set(st.session_state.get("mass_selected_ids", set()))
-
-        # ¿Cambió el conjunto de filas visibles desde el último render?
-        #  - Cambió (se tocó un filtro server-side / multiselect): la grilla recarga;
-        #    restauramos la selección previa con pre_selected_rows y NO reconciliamos
-        #    deselección en este render.
-        #  - No cambió (interacción dentro de la misma vista, incluido el filtro Excel
-        #    client-side): la grilla manda y permite DESELECCIONAR.
-        mass_data_changed = (st.session_state.get("mass_last_visible_ids") != mass_visible_set)
-        st.session_state["mass_last_visible_ids"] = mass_visible_set
-
-        if mass_data_changed:
-            pre_selected_rows = [i for i, _id in enumerate(mass_visible_ids) if _id in prev_ids]
-            gb.configure_selection(
-                selection_mode="multiple",
-                use_checkbox=True,
-                pre_selected_rows=pre_selected_rows,
-            )
-        else:
-            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
+        # Selección múltiple sin pre_selected: en modo masivo la grilla NO dispara rerun
+        # por cada tilde (update_mode más abajo), así podés tildar/destildar y "seleccionar
+        # todo" filtrado libremente; después confirmás con los botones Agregar/Quitar.
+        gb.configure_selection(selection_mode="multiple", use_checkbox=True)
     else:
         gb.configure_selection(selection_mode="single", use_checkbox=False)
     grid_options = gb.build()
@@ -1299,7 +1274,9 @@ def personas_screen():
     grid_response = AgGrid(
         dff_show,
         gridOptions=grid_options,
-        update_mode=GridUpdateMode.SELECTION_CHANGED,
+        # En masiva: MODEL_CHANGED => tildar NO recarga la grilla (podés acumular tildes
+        # y luego confirmar con botones). En modo ficha: SELECTION_CHANGED para abrir al click.
+        update_mode=(GridUpdateMode.MODEL_CHANGED if is_mass_mode else GridUpdateMode.SELECTION_CHANGED),
         theme="alpine",
         enable_enterprise_modules=False,
         height=520,
@@ -1348,38 +1325,40 @@ def personas_screen():
         elif isinstance(selected_rows, pd.DataFrame):
             selected_list = selected_rows.to_dict("records")
 
-        selected_now = set()
+        # IDs actualmente tildados en la grilla (lo que el usuario marcó sin recargar).
+        grid_checked = set()
         for r in selected_list:
             try:
                 if r.get("id") is not None:
-                    selected_now.add(int(r["id"]))
+                    grid_checked.add(int(r["id"]))
             except (TypeError, ValueError):
                 pass
 
-        if mass_data_changed:
-            # La grilla recién recargó (cambió un filtro server-side): pre_selected_rows
-            # ya restauró lo previo; no reconciliamos deselección en este render.
-            nuevo_set = set(prev_ids)
-        else:
-            # Misma vista: la grilla es la fuente de verdad para las filas visibles
-            # (permite DESELECCIONAR). Las selecciones de otras vistas (no visibles
-            # ahora) se conservan.
-            nuevo_set = (set(prev_ids) - mass_visible_set) | selected_now
+        prev_ids = set(st.session_state.get("mass_selected_ids", set()))
+        ids_selected = sorted(prev_ids)
 
-        st.session_state["mass_selected_ids"] = nuevo_set
-        ids_selected = sorted(nuevo_set)
-
-        # Contador + botón para limpiar la selección acumulada
-        csel1, csel2 = st.columns([2, 1])
-        with csel1:
-            st.caption(f"Seleccionadas: {len(ids_selected)}")
-        with csel2:
+        st.caption(
+            "Tildá personas en la grilla (incluido 'seleccionar todo' tras filtrar) y "
+            "confirmá con **Agregar**. Para sacar, tildalas y usá **Quitar**."
+        )
+        bsel1, bsel2, bsel3 = st.columns(3)
+        with bsel1:
+            if st.button("✅ Agregar tildadas", key="btn_add_mass_sel", use_container_width=True):
+                st.session_state["mass_selected_ids"] = prev_ids | grid_checked
+                st.session_state["mass_grid_nonce"] = st.session_state.get("mass_grid_nonce", 0) + 1
+                st.rerun()
+        with bsel2:
+            if st.button("➖ Quitar tildadas", key="btn_del_mass_sel", use_container_width=True):
+                st.session_state["mass_selected_ids"] = prev_ids - grid_checked
+                st.session_state["mass_grid_nonce"] = st.session_state.get("mass_grid_nonce", 0) + 1
+                st.rerun()
+        with bsel3:
             if ids_selected and st.button("🧹 Limpiar selección", key="btn_clear_mass_sel", use_container_width=True):
                 st.session_state["mass_selected_ids"] = set()
-                # Remount de la grilla para limpiar también la selección visual.
                 st.session_state["mass_grid_nonce"] = st.session_state.get("mass_grid_nonce", 0) + 1
-                st.session_state["mass_last_visible_ids"] = None
                 st.rerun()
+
+        st.caption(f"Seleccionadas para la interacción: **{len(ids_selected)}**")
 
         if not ids_selected:
             st.warning("Seleccioná al menos una persona en la tabla para cargar interacción.")
