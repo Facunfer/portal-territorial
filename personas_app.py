@@ -1190,6 +1190,12 @@ def personas_screen():
     # Selección acumulada del modo masivo (fuente de verdad, persiste entre reruns).
     if "mass_selected_ids" not in st.session_state:
         st.session_state["mass_selected_ids"] = set()
+    # Último conjunto de IDs visibles (para detectar cambios de filtro server-side).
+    if "mass_last_visible_ids" not in st.session_state:
+        st.session_state["mass_last_visible_ids"] = None
+    # Nonce para forzar remount de la grilla (limpiar selección visual).
+    if "mass_grid_nonce" not in st.session_state:
+        st.session_state["mass_grid_nonce"] = 0
     
     is_mass_mode = st.session_state["show_mass_interaction"]
     selection_mode = "multiple" if is_mass_mode else "single"
@@ -1257,22 +1263,35 @@ def personas_screen():
             headerCheckboxSelection=True,
             headerCheckboxSelectionFilteredOnly=True,
         )
-        # Restaurar la selección acumulada tras cada rerun: calculamos los índices
-        # posicionales de dff_show cuyas id están en el set persistido.
-        prev_ids = set(st.session_state.get("mass_selected_ids", set()))
-        pre_selected_rows = []
+        # IDs visibles según los filtros server-side (multiselect de arriba).
+        mass_visible_ids = []
         if "id" in dff_show.columns:
-            for i, _id in enumerate(dff_show["id"].tolist()):
+            for _id in dff_show["id"].tolist():
                 try:
-                    if int(_id) in prev_ids:
-                        pre_selected_rows.append(i)
+                    mass_visible_ids.append(int(_id))
                 except (TypeError, ValueError):
                     pass
-        gb.configure_selection(
-            selection_mode="multiple",
-            use_checkbox=True,
-            pre_selected_rows=pre_selected_rows,
-        )
+        mass_visible_set = set(mass_visible_ids)
+        prev_ids = set(st.session_state.get("mass_selected_ids", set()))
+
+        # ¿Cambió el conjunto de filas visibles desde el último render?
+        #  - Cambió (se tocó un filtro server-side / multiselect): la grilla recarga;
+        #    restauramos la selección previa con pre_selected_rows y NO reconciliamos
+        #    deselección en este render.
+        #  - No cambió (interacción dentro de la misma vista, incluido el filtro Excel
+        #    client-side): la grilla manda y permite DESELECCIONAR.
+        mass_data_changed = (st.session_state.get("mass_last_visible_ids") != mass_visible_set)
+        st.session_state["mass_last_visible_ids"] = mass_visible_set
+
+        if mass_data_changed:
+            pre_selected_rows = [i for i, _id in enumerate(mass_visible_ids) if _id in prev_ids]
+            gb.configure_selection(
+                selection_mode="multiple",
+                use_checkbox=True,
+                pre_selected_rows=pre_selected_rows,
+            )
+        else:
+            gb.configure_selection(selection_mode="multiple", use_checkbox=True)
     else:
         gb.configure_selection(selection_mode="single", use_checkbox=False)
     grid_options = gb.build()
@@ -1286,7 +1305,7 @@ def personas_screen():
         height=520,
         fit_columns_on_grid_load=False,
         localeText=LOCALE_ES,
-        key=f"grid_personas_{selection_mode}"
+        key=f"grid_personas_{selection_mode}_{st.session_state.get('mass_grid_nonce', 0)}"
     )
     selected_rows = grid_response.get("selected_rows", None)
 
@@ -1310,8 +1329,10 @@ def personas_screen():
                 st.session_state["ficha_abierta"] = False
                 st.session_state["selected_persona_id"] = None
             else:
-                # Al cancelar la masiva, limpiamos la selección acumulada.
+                # Al cancelar la masiva, limpiamos la selección acumulada y el tracking.
                 st.session_state["mass_selected_ids"] = set()
+                st.session_state["mass_last_visible_ids"] = None
+                st.session_state["mass_grid_nonce"] = st.session_state.get("mass_grid_nonce", 0) + 1
             st.rerun()
 
     if st.session_state["show_casos_personas"]:
@@ -1327,19 +1348,26 @@ def personas_screen():
         elif isinstance(selected_rows, pd.DataFrame):
             selected_list = selected_rows.to_dict("records")
 
-        nuevos_ids = []
+        selected_now = set()
         for r in selected_list:
             try:
                 if r.get("id") is not None:
-                    nuevos_ids.append(int(r["id"]))
+                    selected_now.add(int(r["id"]))
             except (TypeError, ValueError):
                 pass
 
-        # Acumular en session_state (fuente de verdad), igual que en reuniones_app:
-        # cada rerun une la selección previa con la nueva para no perder clicks.
-        combinados = set(st.session_state.get("mass_selected_ids", set())) | set(nuevos_ids)
-        st.session_state["mass_selected_ids"] = combinados
-        ids_selected = sorted(combinados)
+        if mass_data_changed:
+            # La grilla recién recargó (cambió un filtro server-side): pre_selected_rows
+            # ya restauró lo previo; no reconciliamos deselección en este render.
+            nuevo_set = set(prev_ids)
+        else:
+            # Misma vista: la grilla es la fuente de verdad para las filas visibles
+            # (permite DESELECCIONAR). Las selecciones de otras vistas (no visibles
+            # ahora) se conservan.
+            nuevo_set = (set(prev_ids) - mass_visible_set) | selected_now
+
+        st.session_state["mass_selected_ids"] = nuevo_set
+        ids_selected = sorted(nuevo_set)
 
         # Contador + botón para limpiar la selección acumulada
         csel1, csel2 = st.columns([2, 1])
@@ -1348,6 +1376,9 @@ def personas_screen():
         with csel2:
             if ids_selected and st.button("🧹 Limpiar selección", key="btn_clear_mass_sel", use_container_width=True):
                 st.session_state["mass_selected_ids"] = set()
+                # Remount de la grilla para limpiar también la selección visual.
+                st.session_state["mass_grid_nonce"] = st.session_state.get("mass_grid_nonce", 0) + 1
+                st.session_state["mass_last_visible_ids"] = None
                 st.rerun()
 
         if not ids_selected:
@@ -1389,6 +1420,8 @@ def personas_screen():
                         st.error(f"Error al guardar interacciones: {_e}")
                     st.session_state["show_mass_interaction"] = False
                     st.session_state["mass_selected_ids"] = set()
+                    st.session_state["mass_last_visible_ids"] = None
+                    st.session_state["mass_grid_nonce"] = st.session_state.get("mass_grid_nonce", 0) + 1
                     st.rerun()
 
     # ---------------------------------------------------------
