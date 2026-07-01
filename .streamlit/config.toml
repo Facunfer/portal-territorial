@@ -9,6 +9,9 @@ enableCORS = false
 enableXsrfProtection = true
 # Tamaño máximo de archivos subidos (CSV masivo) en MB
 maxUploadSize = 10
+# PERF (prod): sin hot-reload (se despliega con git pull + restart). Evita que el
+# watcher escanee los .py en segundo plano y consuma CPU (tirones intermitentes).
+fileWatcherType = "none"
 
 [browser]
 # No enviar telemetría a Streamlit
