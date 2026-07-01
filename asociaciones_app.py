@@ -1276,8 +1276,10 @@ def asociaciones_screen():
         df_show["ultima_fecha"] = df_show["ultima_fecha"].apply(_format_fecha_ddmmyyyy)
 
     gb = GridOptionsBuilder.from_dataframe(df_show)
-    gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=140, wrapText=True, autoHeight=True)
-    
+    # PERF: sin wrapText/autoHeight (rompen la virtualización) + paginación → render liviano.
+    gb.configure_default_column(sortable=True, filter=True, resizable=True, minWidth=140)
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=100)
+
     gb.configure_column("id", headerName="ID", width=100)
     gb.configure_column("ultima_fecha", headerName="Última fecha")
     gb.configure_column("ultimo_feedback", headerName="Resultado")

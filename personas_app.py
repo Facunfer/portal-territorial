@@ -1236,10 +1236,15 @@ def personas_screen():
     # OPCIÓN B (Set Filter con checkboxes estilo Excel) es feature de ag-Grid Enterprise:
     # requeriría enable_enterprise_modules=True en AgGrid(...) y filter="agSetColumnFilter"
     # por columna. Sin licencia corre en modo evaluación (marca de agua) → NO activar sin OK.
+    # PERF: sin wrapText/autoHeight. autoHeight mide la altura de CADA fila en el DOM
+    # y rompe la virtualización de AgGrid → con ~31k filas hace lentísimo cada rerun.
+    # Filas de alto fijo + paginación mantienen el render liviano.
     gb.configure_default_column(
         sortable=True, filter=True, floatingFilter=True, resizable=True,
-        minWidth=140, wrapText=True, autoHeight=True,
+        minWidth=140,
     )
+    # Paginación client-side: renderiza de a una página en vez de todas las filas.
+    gb.configure_pagination(paginationAutoPageSize=False, paginationPageSize=100)
 
     # Configuración de columnas específicas (incluye tipo de filtro por dato)
     gb.configure_column("id", headerName="ID", width=100, filter="agNumberColumnFilter")
