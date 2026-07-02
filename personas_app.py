@@ -942,39 +942,42 @@ def personas_screen():
         return
 
     persona_ids = df["id"].astype(int).tolist()
+    pids = persona_ids
 
-    # Resumen últimas interacciones (chunked)
-    pids = df["id"].tolist()
+    # Resumen últimas interacciones (cacheado, RPC DISTINCT ON)
     resumen_int = get_interacciones_resumen(tuple(pids))
-    
+
     # Mapeo de usuarios para "Cargado por"
     user_map = personas_edicion.get_usuarios_mapping()
 
-    def _get_resumen(pid):
-        data = resumen_int.get(int(pid))
-        if not data:
-            return None, "NO CONTACTADO", "Desconocido"
-        fdt, st_norm, c_by = data
-        user_name = user_map.get(c_by, "Desconocido") if c_by else "Desconocido"
-        return fdt, st_norm, user_name
+    # PERF (A): vectorizado. Extraemos una sola vez por fila con dict.get (C-level) y
+    # memoizamos las etiquetas de semáforo sobre los valores DISTINTOS (no 31k apply).
+    _res = [resumen_int.get(pid) for pid in pids]
+    df["ultima_fecha_dt"] = [(r[0] if r else None) for r in _res]
+    df["ultima_fecha"]    = [("" if (r is None or r[0] is None) else str(r[0])) for r in _res]
+    df["ultima_resp"]     = [(r[1] if r else "NO CONTACTADO") for r in _res]
+    df["cargado_por"]     = [(user_map.get(r[2], "Desconocido") if (r and r[2]) else "Desconocido") for r in _res]
 
-    res_list = [ _get_resumen(pid) for pid in pids ]
-    df["ultima_fecha_dt"] = [ r[0] for r in res_list ]
-    df["ultima_fecha"] = [ "" if r[0] is None else str(r[0]) for r in res_list ]
-    df["ultima_resp"] = [ r[1] for r in res_list ]
-    df["cargado_por"] = [ r[2] for r in res_list ]
-    df["semaforo_tiempo"] = df["ultima_fecha_dt"].apply(semaforo_tiempo_label)
-    df["semaforo_respuesta"] = df["ultima_resp"].apply(semaforo_respuesta_label)
+    # Semáforos: mapa memoizado sobre valores distintos (mismas etiquetas que antes).
+    _tiempo_map = {d: semaforo_tiempo_label(d) for d in set(df["ultima_fecha_dt"])}
+    df["semaforo_tiempo"] = df["ultima_fecha_dt"].map(_tiempo_map)
+    _resp_map = {v: semaforo_respuesta_label(v) for v in set(df["ultima_resp"])}
+    df["semaforo_respuesta"] = df["ultima_resp"].map(_resp_map)
 
-    # Asignados
+    # Asignados: solo se calcula para las personas que TIENEN asignación (no 31k lambdas);
+    # el resto queda en "" (idéntico a lo que devolvía el cálculo por fila).
     assigned_details_map = _fetch_all_assigned_users_details("PERSONA", tuple(persona_ids))
-    # user = st.session_state["user"] (ya definido al inicio de personas_screen)
     user = st.session_state["user"]
-    
-    df["asignado_a"] = df["id"].apply(
-        lambda x: ", ".join(_get_filtered_usernames(assigned_details_map.get(int(x), []), user))
-    )
-    df["estado_asignacion"] = df["asignado_a"].apply(_calc_estado_asignacion)
+    if assigned_details_map:
+        _asig_map = {
+            int(pid): ", ".join(_get_filtered_usernames(details, user))
+            for pid, details in assigned_details_map.items()
+        }
+        df["asignado_a"] = df["id"].astype(int).map(_asig_map).fillna("")
+    else:
+        df["asignado_a"] = ""
+    _estado_map = {v: _calc_estado_asignacion(v) for v in set(df["asignado_a"])}
+    df["estado_asignacion"] = df["asignado_a"].map(_estado_map)
 
     # =========================
     # filtros (con keys para reset)
