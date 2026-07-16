@@ -8,8 +8,8 @@ import io
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 from db import get_supabase
-from constants import BARRIOS_POR_COMUNA
-from permisos import allowed_modules
+from constants import BARRIOS_POR_COMUNA, TAGS_CONTROLADOS_POR_VERTICAL, TODOS_LOS_TAGS_CONTROLADOS
+from permisos import allowed_modules, tags_controlados_del_usuario, is_global_master
 import personas_edicion
 import personas_scope_rules
 
@@ -1018,11 +1018,13 @@ def personas_screen():
             # Tags
             # Lógica corregida: Si es Vertical (TAG), solo mostrar tags de su vertical.
             if kind == "TAG" and val:
-                # val viene como "JUVENTUD|BASES|UNIVERSIDAD"
+                # val viene como "PROFESIONAL" o "MIGRANTE|..." para verticales
                 tags_permitidos = {t.strip().upper() for t in val.split("|") if t.strip()}
-                tags_vals = sorted(list(tags_permitidos))
+                # Agregar tags controlados de la vertical del usuario
+                user_ctrl = tags_controlados_del_usuario(user)
+                tags_vals = sorted(list(tags_permitidos | user_ctrl))
             else:
-                # Global / Comuna / Otro -> Mostrar TODOS los sugeridos + los presentes
+                # Global / Comuna / Otro -> Mostrar todos los sugeridos + los presentes en datos
                 data_tags = {
                     t.strip().upper()
                     for v in df.get("tags", pd.Series()).fillna("").tolist()
@@ -1030,8 +1032,11 @@ def personas_screen():
                     if t.strip()
                 }
                 sugeridos_tags = set([t.upper() for t in personas_edicion.TAGS_SUGERIDOS])
+                # Global Master puede filtrar por todos los tags controlados
+                if is_global_master(user):
+                    sugeridos_tags |= TODOS_LOS_TAGS_CONTROLADOS
                 tags_vals = sorted(list(data_tags | sugeridos_tags))
-                
+
             filtro_tags_multi = st.multiselect("Tags", options=tags_vals, default=[], key="flt_tags")
 
         # COL 3

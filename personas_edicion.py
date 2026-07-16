@@ -13,7 +13,8 @@ from db import get_supabase
 # =========================
 # Fuente única de tags en constants.TAGS_FIJOS (incluye PARTICIPANDO y SACAR DE LA BASE).
 # Se mantiene el nombre TAGS_SUGERIDOS por compatibilidad con las referencias existentes.
-from constants import TAGS_FIJOS
+from constants import TAGS_FIJOS, TAGS_CONTROLADOS_POR_VERTICAL, TAGS_CONTROLADOS_LABELS, TODOS_LOS_TAGS_CONTROLADOS
+from permisos import tags_controlados_del_usuario, puede_gestionar_tag
 TAGS_SUGERIDOS = TAGS_FIJOS
 
 RESPUESTAS = ["POSITIVO", "NEUTRO", "NEGATIVO", "NO RESPONDIÓ", "NUMERO INEXISTENTE/EQUIVOCADO"]
@@ -103,6 +104,28 @@ def _tags_to_db_value(tags_sel):
         cleaned = [normalize_tag(t) for t in tags_sel if normalize_tag(t)]
         return cleaned if cleaned else None
     return None
+
+
+def merge_tags_guardado(user: dict, tags_existentes: list, tags_enviados: list) -> list:
+    """Merge seguro que nunca pisa tags controlados de otras verticales.
+
+    1. Del envío acepta: tags generales (no controlados) + tags controlados que
+       el usuario SÍ gestiona.
+    2. Preserva siempre: tags controlados de otras verticales que ya estaban.
+    3. Devuelve lista deduplicada y ordenada.
+    """
+    existentes = {normalize_tag(t) for t in (tags_existentes or []) if normalize_tag(t)}
+    enviados   = {normalize_tag(t) for t in (tags_enviados   or []) if normalize_tag(t)}
+    gestionables = tags_controlados_del_usuario(user)
+
+    # Tags aceptados del envío: generales o dentro de los gestionables del usuario
+    aceptados = {t for t in enviados if t not in TODOS_LOS_TAGS_CONTROLADOS or t in gestionables}
+
+    # Tags controlados de otras verticales que ya tenía la persona → se preservan
+    preservados = {t for t in existentes if t in TODOS_LOS_TAGS_CONTROLADOS and t not in gestionables}
+
+    resultado = sorted(aceptados | preservados)
+    return resultado
 
 
 # =========================
@@ -717,12 +740,25 @@ def render_ficha_persona(user, persona_id: int):
             fiscalizo = st.selectbox("Fiscalizó", fiscal_opts, index=fiscal_index, key=f"edit_fiscal_{persona_id}")
 
         tags_actual = _parse_tags(persona.get("tags"))
+
+        # Separar tags que el usuario puede gestionar de los que son solo lectura
+        tags_gestionables = [t for t in tags_actual if puede_gestionar_tag(user, t)]
+        tags_solo_lectura = [t for t in tags_actual if not puede_gestionar_tag(user, t)]
+
+        # Opciones = tags generales + tags controlados del usuario + los que ya tiene
+        user_ctrl = tags_controlados_del_usuario(user)
+        opciones_tags = sorted(set(TAGS_SUGERIDOS) | user_ctrl | set(tags_gestionables))
+
         tags_sel = st.multiselect(
             "Tags",
-            options=sorted(list(set(TAGS_SUGERIDOS + tags_actual))),
-            default=tags_actual,
+            options=opciones_tags,
+            default=[t for t in tags_gestionables if t in opciones_tags],
             key=f"edit_tags_{persona_id}",
         )
+
+        if tags_solo_lectura:
+            labels_ro = [TAGS_CONTROLADOS_LABELS.get(t, t) for t in tags_solo_lectura]
+            st.caption(f"Tags de otras verticales (solo lectura): {', '.join(labels_ro)}")
 
         if st.button("💾 Guardar cambios", key=f"btn_save_persona_{persona_id}"):
             try:
@@ -759,7 +795,7 @@ def render_ficha_persona(user, persona_id: int):
                     "fiscalizo": (fiscalizo or "").strip().upper() if fiscalizo else None,
                     "comuna_id": int(comuna_nueva),
                     "barrio": barrio.strip() if barrio else None,
-                    "tags": _tags_to_db_value(tags_sel),
+                    "tags": _tags_to_db_value(merge_tags_guardado(user, tags_actual, tags_sel)),
                     "latitud": lat_final,
                     "longitud": lon_final,
                 }

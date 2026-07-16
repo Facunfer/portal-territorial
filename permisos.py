@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 
+from constants import TAGS_CONTROLADOS_POR_VERTICAL, TODOS_LOS_TAGS_CONTROLADOS
+
 
 # =========================
 # Constantes
@@ -254,6 +256,29 @@ def allowed_modules(user: dict) -> List[str]:
         out.append("Usuarios")
 
     return out
+
+
+# =========================
+# Tags controlados por vertical
+# =========================
+
+def tags_controlados_del_usuario(user: dict) -> set:
+    """Tags controlados que este usuario puede crear, asignar y quitar.
+    El Global Master puede gestionar todos. Una vertical específica solo los suyos.
+    Cualquier otro usuario devuelve set vacío (no puede crear/quitar tags controlados)."""
+    if is_global_master(user):
+        return set(TODOS_LOS_TAGS_CONTROLADOS)
+    vertical = _up(user.get("vertical"))
+    return set(TAGS_CONTROLADOS_POR_VERTICAL.get(vertical, []))
+
+
+def puede_gestionar_tag(user: dict, tag: str) -> bool:
+    """True si el usuario puede agregar/quitar este tag.
+    Tags generales (no controlados): cualquier usuario con permiso de edición puede.
+    Tags controlados: solo el dueño de la vertical (o GM)."""
+    if tag not in TODOS_LOS_TAGS_CONTROLADOS:
+        return True
+    return tag in tags_controlados_del_usuario(user)
 
 
 def creatable_roles(user: dict) -> Dict[str, Any]:

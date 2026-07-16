@@ -40,6 +40,63 @@ TAGS_FIJOS: list[str] = [
     "SACAR DE LA BASE",
 ]
 
+# =============================================================================
+# Tags controlados por vertical
+# =============================================================================
+# Fuente única. Clave = usuarios.vertical (mayúsculas exactas).
+# Los sub-tags de PROFESIONALES llevan prefijo "PROF: " para no colisionar con
+# los tags de visibilidad de las verticales SALUD y EDUCACION (que buscan los
+# strings "SALUD" y "EDUCACIÓN" a secas). Migrantes usa "NAC: " por simetría.
+TAGS_CONTROLADOS_POR_VERTICAL: dict[str, list[str]] = {
+    "PROFESIONALES": [
+        "PROF: ABOGADO",
+        "PROF: INGENIERO",
+        "PROF: ARQUITECTO",
+        "PROF: ECONOMISTA",
+        "PROF: CONTADOR",
+        "PROF: PERIODISTA",
+        "PROF: CIENCIAS SOCIALES",
+        "PROF: SALUD",
+        "PROF: EDUCACIÓN",
+        "PROF: IT",
+    ],
+    "MIGRANTES": [
+        "NAC: VENEZOLANO",
+        "NAC: CHINO",
+        "NAC: COREANO",
+        "NAC: BOLIVIANO",
+        "NAC: PERUANO",
+        "NAC: URUGUAYO",
+        "NAC: CHILENO",
+    ],
+}
+
+# Labels visibles en la UI (Title Case). Para tags sin entrada, la UI muestra el string canónico.
+TAGS_CONTROLADOS_LABELS: dict[str, str] = {
+    "PROF: ABOGADO": "Abogado",
+    "PROF: INGENIERO": "Ingeniero",
+    "PROF: ARQUITECTO": "Arquitecto",
+    "PROF: ECONOMISTA": "Economista",
+    "PROF: CONTADOR": "Contador",
+    "PROF: PERIODISTA": "Periodista",
+    "PROF: CIENCIAS SOCIALES": "Ciencias Sociales",
+    "PROF: SALUD": "Salud (Prof.)",
+    "PROF: EDUCACIÓN": "Educación (Prof.)",
+    "PROF: IT": "IT",
+    "NAC: VENEZOLANO": "Venezolano",
+    "NAC: CHINO": "Chino",
+    "NAC: COREANO": "Coreano",
+    "NAC: BOLIVIANO": "Boliviano",
+    "NAC: PERUANO": "Peruano",
+    "NAC: URUGUAYO": "Uruguayo",
+    "NAC: CHILENO": "Chileno",
+}
+
+# Conjunto plano de todos los tags controlados (para detectar cuáles son "reservados").
+TODOS_LOS_TAGS_CONTROLADOS: frozenset[str] = frozenset(
+    t for tags in TAGS_CONTROLADOS_POR_VERTICAL.values() for t in tags
+)
+
 BARRIOS_POR_COMUNA: dict[int, list[str]] = {
     1: ["Retiro", "San Nicolás", "Puerto Madero", "San Telmo", "Montserrat", "Constitución"],
     2: ["Recoleta"],
