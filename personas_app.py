@@ -9,7 +9,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 from db import get_supabase
 from constants import BARRIOS_POR_COMUNA, TAGS_CONTROLADOS_POR_VERTICAL, TODOS_LOS_TAGS_CONTROLADOS
-from permisos import allowed_modules, tags_controlados_del_usuario, is_global_master
+from permisos import allowed_modules, tags_controlados_del_usuario, is_global_master, is_comuna_user
 import personas_edicion
 import personas_scope_rules
 
@@ -1032,8 +1032,8 @@ def personas_screen():
                     if t.strip()
                 }
                 sugeridos_tags = set([t.upper() for t in personas_edicion.TAGS_SUGERIDOS])
-                # Global Master puede filtrar por todos los tags controlados
-                if is_global_master(user):
+                # Global Master y usuarios de COMUNA pueden filtrar por todos los tags controlados
+                if is_global_master(user) or is_comuna_user(user):
                     sugeridos_tags |= TODOS_LOS_TAGS_CONTROLADOS
                 tags_vals = sorted(list(data_tags | sugeridos_tags))
 
