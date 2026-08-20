@@ -2,16 +2,23 @@
 import streamlit as st
 import pandas as pd
 
+from constants import TAGS_CONTROLADOS_POR_VERTICAL
+
 # =========================
 # CONFIG / CONSTANTES
 # =========================
+# PROFESIONALES ve el tag general "PROFESIONAL" y además todos sus sub-tags
+# controlados ("PROF: ABOGADO", "PROF: IT", …). Se derivan de la fuente única en
+# constants.py para que un sub-tag nuevo entre solo en la visibilidad.
+_TAGS_PROFESIONALES = ["PROFESIONAL", *TAGS_CONTROLADOS_POR_VERTICAL.get("PROFESIONALES", [])]
+
 VERTICAL_TAGS_MAP = {
     # Existentes
     "CULTO": ["CULTO"],
     "JUVENTUD": ["JUVENTUD", "BASES", "UNIVERSIDAD"],
     "GENERACION_PLATEADA": ["LIBERTAD PLATEADA"],
     "MIGRANTES": ["MIGRANTE"],
-    "PROFESIONALES": ["PROFESIONAL"],
+    "PROFESIONALES": _TAGS_PROFESIONALES,
     # Nuevas
     "CCAA": ["COMERCIANTE"],
     "PYMES": ["PYME"],

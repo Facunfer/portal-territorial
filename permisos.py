@@ -20,6 +20,11 @@ VERT_PERSONAS = [
 ]
 VERT_ASOC = ["CULTO", "CCAA", "CULTURA", "CLUBES"]  # CLUBES usa el scope ASOC_TIPO con tipo="Clubes".
 
+# Tags que dan visibilidad a la vertical PROFESIONALES: el tag general más todos sus
+# sub-tags controlados. Se deriva de constants.py (fuente única) para que agregar un
+# "PROF: X" nuevo no requiera tocar el scope.
+TAGS_PROFESIONALES = ["PROFESIONAL", *TAGS_CONTROLADOS_POR_VERTICAL.get("PROFESIONALES", [])]
+
 
 def _up(s: Optional[str]) -> str:
     return (s or "").strip().upper()
@@ -111,7 +116,9 @@ def personas_scope(user: dict) -> Scope:
             "JUVENTUD": "JUVENTUD|BASES|UNIVERSIDAD",
             "GENERACION_PLATEADA": "LIBERTAD PLATEADA",
             "MIGRANTES": "MIGRANTE",
-            "PROFESIONALES": "PROFESIONAL",
+            # Además del tag general, la vertical ve a quien tenga cualquiera de sus
+            # sub-tags controlados (PROF: ABOGADO, PROF: IT, …). Ver TAGS_PROFESIONALES.
+            "PROFESIONALES": "|".join(TAGS_PROFESIONALES),
             "CULTO": "CULTO",
             "CCAA": "COMERCIANTE",
             "PYMES": "PYME",
