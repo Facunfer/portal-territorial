@@ -689,8 +689,15 @@ def render_ficha_persona(user, persona_id: int):
 
         comuna_actual = int(float(persona.get("comuna_id") or 0)) if str(persona.get("comuna_id") or "").strip() else 0
         comunas = list(range(1, 16))
+        if comuna_actual == 0:
+            # Persona sin comuna asignada: se muestra tal cual (si no, el selector caería
+            # en la comuna 1 y al guardar la movería sin que nadie lo haya decidido).
+            comunas = [0] + comunas
         comuna_index = comunas.index(comuna_actual) if comuna_actual in comunas else 0
-        comuna_nueva = st.selectbox("Comuna", comunas, index=comuna_index, key=f"edit_comuna_{persona_id}")
+        comuna_nueva = st.selectbox(
+            "Comuna", comunas, index=comuna_index, key=f"edit_comuna_{persona_id}",
+            format_func=lambda c: "Sin asignar" if c == 0 else str(c),
+        )
 
         barrios_opciones = BARRIOS_POR_COMUNA.get(int(comuna_nueva), [])
         barrio_actual = (persona.get("barrio") or "").strip()

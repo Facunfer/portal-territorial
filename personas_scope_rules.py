@@ -99,7 +99,9 @@ def apply_personas_visibility_filter(query, user_ctx: dict, force_filter: bool =
                 # Filtro string: tags.ilike.%VAL%
                 or_filters.append(f"tags.ilike.%{tag}%")
             
-        return query.or_(",".join(or_filters))
+        # Las personas "sin comuna asignada" (comuna 0: entraron por un formulario sin
+        # campo de comuna) las ve solo el Global Master, no las verticales.
+        return query.or_(",".join(or_filters)).neq("comuna_id", 0)
 
     # 3. Fallback a lógica existente (Comuna)
     if ambito == "COMUNA" and comuna_id is not None:

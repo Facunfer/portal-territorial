@@ -1005,11 +1005,17 @@ def personas_screen():
                  # aunque no tengan datos aun, para que puedan filtrar explicitamente o ver "Todas".
                  # Ojo: si hay datos de una sola comuna, el selector igual es util para confirmar "estoy viendo todo" o "solo esto".
                  comunas_disp = list(range(1, 16))
+                 if kind == "ALL":
+                     # Solo el Global Master ve a las personas sin comuna asignada (comuna 0).
+                     comunas_disp = [0] + comunas_disp
                  # Podriamos filtrar solo las presentes: 
                  # comunas_disp = sorted(df["comuna_id"].dropna().unique().astype(int).tolist())
                  # Pero el usuario pide VER el filtro. Si no hay datos, pues no habra resultados.
                  # Mejor strategy: Mostrar todas las comunas posibles (1..15) para que el filtro exista.
-                 filtro_comuna_vertical = st.selectbox("Comuna (Vertical)", ["Todas"] + comunas_disp, index=0, key="flt_p_comuna_v")
+                 filtro_comuna_vertical = st.selectbox(
+                     "Comuna (Vertical)", ["Todas"] + comunas_disp, index=0, key="flt_p_comuna_v",
+                     format_func=lambda c: "Sin asignar" if c == 0 else c,
+                 )
 
         # COL 2
         with c2:
@@ -1056,7 +1062,7 @@ def personas_screen():
             # Si el user seleccionó una comuna específica en el filtro vertical, mostramos solo esos barrios
             # Si eligió "Todas", mostramos todos los del DF.
             comunas_para_barrios = df['comuna_id'].dropna().unique()
-            if filtro_comuna_vertical and filtro_comuna_vertical != "Todas":
+            if filtro_comuna_vertical is not None and filtro_comuna_vertical != "Todas":
                 comunas_para_barrios = [int(filtro_comuna_vertical)]
                 # Re-filtramos barrios disponibles para que solo muestre los de esa comuna (cleaner)
                 # Ojo: barrios_disponibles_df tiene lo del DF completo por ahora.
@@ -1071,7 +1077,7 @@ def personas_screen():
                 except: pass
             
             # Tambien agregamos los que ya esten en la data (si coinciden con la comuna seleccionada)
-            if filtro_comuna_vertical and filtro_comuna_vertical != "Todas":
+            if filtro_comuna_vertical is not None and filtro_comuna_vertical != "Todas":
                  # Filtramos data temp
                  bs_data = df[df["comuna_id"] == int(filtro_comuna_vertical)]["barrio"].dropna().unique()
                  for b in bs_data: barrios_disponibles_df.add(b)
@@ -1146,7 +1152,7 @@ def personas_screen():
             col_ts = pd.to_datetime(dff["ultima_fecha_dt"], errors="coerce")
             dff = dff[(col_ts >= fd) & (col_ts <= fh)]
 
-    if filtro_comuna_vertical and filtro_comuna_vertical != "Todas":
+    if filtro_comuna_vertical is not None and filtro_comuna_vertical != "Todas":
         dff = dff[dff["comuna_id"] == int(filtro_comuna_vertical)]
 
     st.markdown("---")
