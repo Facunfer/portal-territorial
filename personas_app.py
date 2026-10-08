@@ -1005,9 +1005,8 @@ def personas_screen():
                  # aunque no tengan datos aun, para que puedan filtrar explicitamente o ver "Todas".
                  # Ojo: si hay datos de una sola comuna, el selector igual es util para confirmar "estoy viendo todo" o "solo esto".
                  comunas_disp = list(range(1, 16))
-                 if kind == "ALL":
-                     # Solo el Global Master ve a las personas sin comuna asignada (comuna 0).
-                     comunas_disp = [0] + comunas_disp
+                 # Comuna 0 = "Sin asignar": personas que entraron por un formulario sin comuna.
+                 comunas_disp = [0] + comunas_disp
                  # Podriamos filtrar solo las presentes: 
                  # comunas_disp = sorted(df["comuna_id"].dropna().unique().astype(int).tolist())
                  # Pero el usuario pide VER el filtro. Si no hay datos, pues no habra resultados.
