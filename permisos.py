@@ -96,7 +96,19 @@ def is_vertical_asoc(user: dict) -> bool:
 # =========================
 # Scopes por módulo
 # =========================
+def _es_eje(user: dict) -> bool:
+    """
+    Ámbito EJE (Sur/Oeste/Norte/Centro): opera sobre varias comunas y se usa SOLO
+    desde el CRM nuevo (Next.js). Esta app no lo implementa, y por eso lo corta:
+    sin esto caería en el `return Scope(kind="ALL")` de abajo y vería TODA la base.
+    """
+    return get_ambito(user) == "EJE"
+
+
 def personas_scope(user: dict) -> Scope:
+    if _es_eje(user):
+        return Scope(kind="NONE")
+
     if is_agenda_user(user):
         # AGENDA no tiene acceso ni scope sobre personas; sus modulos son solo de reuniones.
         return Scope(kind="NONE")
@@ -141,6 +153,9 @@ def asociaciones_scope(user: dict) -> Scope:
       - CULTURA -> Espacios Culturales
       - CLUBES -> Clubes
     """
+    if _es_eje(user):
+        return Scope(kind="NONE")
+
     if is_agenda_user(user):
         # AGENDA no tiene acceso ni scope sobre asociaciones; ve reuniones globales read-only.
         return Scope(kind="NONE")
@@ -174,6 +189,9 @@ def users_scope(user: dict) -> Scope:
     - COMUNA: ve usuarios con comuna_id = la suya
     - VERTICAL_*: ve usuarios con (ambito igual) y (vertical igual)
     """
+    if _es_eje(user):
+        return Scope(kind="NONE")
+
     if is_agenda_user(user):
         # AGENDA no administra usuarios, por eso no recibe scope administrativo.
         return Scope(kind="NONE")
@@ -202,6 +220,10 @@ def can_manage_users(user: dict) -> bool:
     - CABEZA/MASTER de COMUNA o VERTICAL: sí solo si es_original=True
     - EXTRACTO: no
     """
+    if _es_eje(user):
+        # Un eje opera datos, no administra usuarios.
+        return False
+
     if is_agenda_user(user):
         # AGENDA es EXTRACTO read-only y nunca ve el modulo Usuarios.
         return False
@@ -222,6 +244,10 @@ def allowed_modules(user: dict) -> List[str]:
     """
     amb = get_ambito(user)
     rol = get_rol(user)
+
+    if amb == "EJE":
+        # El ámbito EJE se opera desde el CRM nuevo; esta app no le ofrece nada.
+        return []
 
     if amb == "AGENDA":
         # AGENDA tiene sidebar aislado: solo consulta y visualizacion read-only de reuniones.

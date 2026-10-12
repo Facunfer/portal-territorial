@@ -79,6 +79,11 @@ def apply_personas_visibility_filter(query, user_ctx: dict, force_filter: bool =
     ambito = (user_ctx.get("ambito") or "").strip().upper()
     comuna_id = user_ctx.get("comuna_id")
 
+    # 0. EJE: no se implementa en esta app (se opera desde el CRM nuevo). Sin esta
+    #    línea caería al `return query` del final y vería toda la base.
+    if ambito == "EJE":
+        return query.eq("id", -1)
+
     # 1. ADMIN / GLOBAL MASTER: No filtramos
     if ambito == "GLOBAL" and rol == "MASTER":
         return query
